@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-const defaultConfigDirectory = () =>
+export const defaultConfigDirectory = () =>
   process.platform === 'win32'
     ? join(process.env.APPDATA ?? homedir(), 'LightFlux')
     : join(

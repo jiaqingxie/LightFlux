@@ -70,7 +70,7 @@ const PRIVACY_SECTIONS: DocumentSection[] = [
   {
     body: [
       'LightFlux 采用本地优先设计。未登录时，任务、项目、富文本内容、设置和统计数据保存在当前设备，不会因为打开应用而自动上传。',
-      'Web 端优先使用浏览器 IndexedDB；原生客户端使用应用文档目录保存数据。',
+      '桌面客户端使用本地持久化存储；清除应用数据前应先完成独立备份。',
     ],
     title: '本地数据',
   },
@@ -83,7 +83,7 @@ const PRIVACY_SECTIONS: DocumentSection[] = [
   },
   {
     body: [
-      '邮箱密码和验证码登录由 Better Auth 处理。Web 与桌面端使用安全会话 Cookie，iOS 与 Android 使用系统安全存储保存会话凭据。',
+      '邮箱密码和验证码登录由 Better Auth 处理。桌面端使用安全会话 Cookie 保存登录状态。',
       '验证码和密码仅用于身份验证，不会写入任务内容。',
     ],
     title: '身份验证',
@@ -107,7 +107,7 @@ const PRIVACY_SECTIONS: DocumentSection[] = [
 const TERMS_SECTIONS: DocumentSection[] = [
   {
     body: [
-      'LightFlux 当前处于早期版本。你可以使用 Web 与已公开的桌面安装包管理个人任务和计划。',
+      'LightFlux 当前处于早期版本。你可以使用已公开的桌面安装包管理个人任务和计划，并通过 CLI 连接自动化工作流。',
       '请不要使用 LightFlux 存储违法内容、攻击服务、干扰其他用户或绕过安全限制。',
     ],
     title: '使用范围',
@@ -185,7 +185,7 @@ export const MarketingChangelog = () => {
 
   return (
     <MarketingLayout
-      description="查看 LightFlux Web 与桌面应用的重要更新。"
+      description="查看 LightFlux 桌面应用与 CLI 的重要更新。"
       path="/changelog"
       title="LightFlux 更新日志"
     >

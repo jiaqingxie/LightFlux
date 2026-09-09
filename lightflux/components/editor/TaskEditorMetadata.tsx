@@ -31,7 +31,7 @@ import {
   TaskPriorityIcon,
 } from '../tasks/TaskPriorityIndicator';
 
-type PickerKind = 'date' | 'project' | 'priority';
+type PickerKind = 'date' | 'milestone' | 'project' | 'priority';
 
 const MetadataChip = ({
   active,
@@ -193,6 +193,8 @@ const TaskEditorMetadata = ({
   todo: Todo;
 }) => {
   const projects = useTodoStore((state) => state.projects);
+  const milestones = useTodoStore((state) => state.milestones);
+  const allMilestones = useTodoStore((state) => state.allMilestones);
   const updateTodo = useTodoStore((state) => state.updateTodo);
   const moveTodoToProject = useTodoStore((state) => state.moveTodoToProject);
   const [picker, setPicker] = useState<PickerKind | null>(null);
@@ -202,6 +204,10 @@ const TaskEditorMetadata = ({
     (a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt,
   );
   const priorityTheme = TASK_PRIORITY_THEME[todo.priority];
+  const milestoneName =
+    allMilestones.find((milestone) => milestone.id === todo.milestoneId)
+      ?.title ??
+    labels.editor.noMilestone;
   const dateLabel = todo.scheduledDate
     ? fromDateKey(todo.scheduledDate).toLocaleDateString(
         language === 'zh' ? 'zh-CN' : 'en-US',
@@ -227,6 +233,10 @@ const TaskEditorMetadata = ({
     moveTodoToProject(todo.id, projectId);
     closePicker();
   };
+  const setMilestone = (milestoneId: string | null) => {
+    updateTodo(todo.id, { milestoneId });
+    closePicker();
+  };
 
   return (
     <View style={styles.container}>
@@ -250,6 +260,13 @@ const TaskEditorMetadata = ({
         tint={
           todo.priority === 'none' ? undefined : priorityTheme.color
         }
+      />
+      <MetadataChip
+        active={picker === 'milestone'}
+        icon="diamond-outline"
+        label={milestoneName}
+        onPress={openPicker('milestone')}
+        tint={todo.milestoneId ? '#6759E8' : undefined}
       />
 
       {picker === 'date' ? (
@@ -334,6 +351,35 @@ const TaskEditorMetadata = ({
               />
             ),
           )}
+        </MenuSurface>
+      ) : null}
+
+      {picker === 'milestone' ? (
+        <MenuSurface
+          closeLabel={labels.cancel}
+          estimatedHeight={Math.min(370, 44 + (milestones.length + 1) * 44)}
+          onClose={closePicker}
+          position={position}
+          width={240}
+        >
+          <MenuItem
+            label={labels.editor.noMilestone}
+            onPress={() => setMilestone(null)}
+            selected={todo.milestoneId === null}
+          />
+          {milestones.map((milestone) => (
+            <MenuItem
+              key={milestone.id}
+              label={milestone.title}
+              onPress={() => setMilestone(milestone.id)}
+              selected={todo.milestoneId === milestone.id}
+              trailing={
+                todo.milestoneId === milestone.id ? (
+                  <Ionicons color="#6759E8" name="checkmark" size={17} />
+                ) : null
+              }
+            />
+          ))}
         </MenuSurface>
       ) : null}
     </View>

@@ -5,11 +5,9 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
     "desktop:web": "expo export --platform web --output-dir desktop-dist",
     "editor:build": "vite --config ./editor-web/vite.config.ts build && npm run editor:postbuild",
     "editor:postbuild": "node ./node_modules/@10play/tentap-editor/scripts/buildEditor.js ./editor-web/build/index.html ./editor-web/build/editorHtml.js",
-    "ios": "expo start --ios",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "web": "expo start --web"
@@ -20,6 +18,7 @@
     "@expo/metro-runtime": "~57.0.8",
     "@expo/vector-icons": "^15.0.2",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",

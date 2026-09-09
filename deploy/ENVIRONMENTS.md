@@ -12,8 +12,8 @@
 | 环境 | 用途 | 触发者 | 数据库 | 域名/入口 |
 | --- | --- | --- | --- | --- |
 | development | 本地开发、调试、跑脚本 | 开发者本机 | **独立 dev Supabase 项目** | `localhost:8081`（Web）/ `localhost:8787`（API） |
-| staging（可选） | 上线前灰度、真机联调 | `develop` 分支 CI | 独立 staging 库 | `staging.lightflux.site` |
-| production | 正式用户 | `main` 分支 CI | 生产 Supabase 项目 | `lightflux.site` |
+| staging（可选） | 上线前灰度 | `develop` 分支 CI | 独立 staging 库 | 独立 staging API 域名 |
+| production | 正式用户 | `main` 分支 CI | 生产 PostgreSQL | 境外或自托管 HTTPS API 域名 |
 
 单人/小团队起步阶段可先只做 **development + production 两层**，staging 后续按需加。
 
@@ -96,14 +96,14 @@ Radon / Expo 原生开发请求会携带动态端口的 `exp://127.0.0.1:*` Orig
 - **development**：`OTP_DELIVERY=log`（验证码打印到服务端日志），
   或本地 MailHog（`OTP_DELIVERY=smtp SMTP_HOST=localhost SMTP_PORT=1025`）。**不向真实邮箱发信**。
   注意：`log` 模式在 `NODE_ENV=production` 下会被服务端主动拒绝，这一保护正好防止生产误用日志投递。
-- **production**：Resend SMTP，`SMTP_FROM=LightFlux <noreply@lightflux.site>`。
+- **production**：SMTP 服务，发件地址必须属于已验证域名。
 
 ## 6. 前端多环境
 
 `EXPO_PUBLIC_*` 在**构建时内联**（硬约束），因此按环境切换 `.env`：
 
 - 本地对本地 API：`EXPO_PUBLIC_AUTH_API_URL=http://localhost:8787` 等。
-- 本地对生产 API（联调）：指向 `https://lightflux.site`。
+- 本地对生产 API（联调）：指向实际生产 HTTPS API 域名。
 - 生产构建：CI 内注入生产域名后 `expo export`。
 
 不要把生产域名写死在源码里；始终经由 `process.env.EXPO_PUBLIC_*`。
@@ -112,7 +112,7 @@ Radon / Expo 原生开发请求会携带动态端口的 `exp://127.0.0.1:*` Orig
 
 | 分支 | 环境 | workflow |
 | --- | --- | --- |
-| `main` | production | `server-deploy.yml` / `web-deploy.yml`（现状） |
+| `main` | production | `server-deploy.yml`；Web 按需手动部署 |
 | `develop`（可选） | staging | 复制一份 deploy workflow，指向 staging 主机/域名/secrets |
 
 Secrets 在 GitHub 里按环境命名（如 `PROD_SSH_KEY` / `STAGING_SSH_KEY`），

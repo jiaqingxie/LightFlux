@@ -1,22 +1,39 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   type DimensionValue,
   Pressable,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
 import { translations } from '../../content';
+import { inputAccentProps } from '../../config/input';
+import {
+  approveCliDevice,
+  loadWorkspaceAudit,
+  undoWorkspaceMutation,
+  WorkspaceMutationAudit,
+} from '../../services/authApi';
 import {
   DesktopPreferences,
   DockIconStyle,
+  exportDesktopBackup,
+  importDesktopBackup,
 } from '../../services/desktopRuntime';
 import { useDesktopStore } from '../../store/desktopStore';
-import { flushAppState } from '../../store/todoStore';
+import {
+  exportAppStateBackup,
+  flushAppState,
+  reloadAppStateFromRemote,
+  restoreAppStateBackup,
+} from '../../store/todoStore';
 import { Language } from '../../types/todo';
 import ActionButton from '../ui/ActionButton';
+import { useConfirmation } from '../ui/ConfirmationProvider';
+import { useToast } from '../ui/ToastProvider';
 import {
   DockIconPreview,
   SettingOption,
@@ -27,17 +44,30 @@ import {
 import styles from './styles';
 
 const DesktopSettingsSections = ({
+  authenticated,
   controlWidth,
+  initialDeviceCode,
   language,
+  onDeviceCodeAuthorized,
   stacked,
 }: {
+  authenticated: boolean;
   controlWidth: DimensionValue;
+  initialDeviceCode?: string | null;
   language: Language;
+  onDeviceCodeAuthorized?: () => void;
   stacked: boolean;
 }) => {
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const [hoveredDockIcon, setHoveredDockIcon] =
     useState<DockIconStyle | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [deviceCode, setDeviceCode] = useState('');
+  const [deviceCodeBusy, setDeviceCodeBusy] = useState(false);
+  const [activity, setActivity] = useState<WorkspaceMutationAudit[]>([]);
+  const [activityBusy, setActivityBusy] = useState(false);
+  const confirm = useConfirmation();
+  const notify = useToast();
   const labels = translations[language];
   const desktopLabels = labels.desktop.settings;
   const {
@@ -70,8 +100,59 @@ const DesktopSettingsSections = ({
 
   const focus = (row: string) => (focused: boolean) =>
     setFocusedRow(focused ? row : null);
+  useEffect(() => {
+    const normalized = initialDeviceCode?.toUpperCase();
+    if (normalized && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(normalized)) {
+      setDeviceCode(normalized);
+    }
+  }, [initialDeviceCode]);
   const updatePreferences = (changes: Partial<DesktopPreferences>) => {
     void setPreferences(changes);
+  };
+  const handleExportBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const content = await exportAppStateBackup();
+      const path = await exportDesktopBackup(content);
+      if (path) {
+        notify(desktopLabels.backupExported);
+      }
+    } catch (error) {
+      console.warn('Unable to export LightFlux backup.', error);
+      notify(desktopLabels.backupFailed, 'error');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+  const handleImportBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const content = await importDesktopBackup();
+      if (!content) {
+        return;
+      }
+      confirm({
+        cancelText: labels.cancel,
+        confirmText: desktopLabels.restoreBackupConfirm,
+        message: desktopLabels.restoreBackupMessage,
+        onConfirm: () => {
+          setBackupBusy(true);
+          void restoreAppStateBackup(content)
+            .then(() => notify(desktopLabels.backupRestored))
+            .catch((error) => {
+              console.warn('Unable to restore LightFlux backup.', error);
+              notify(desktopLabels.backupFailed, 'error');
+            })
+            .finally(() => setBackupBusy(false));
+        },
+        title: desktopLabels.restoreBackupTitle,
+      });
+    } catch (error) {
+      console.warn('Unable to read LightFlux backup.', error);
+      notify(desktopLabels.backupFailed, 'error');
+    } finally {
+      setBackupBusy(false);
+    }
   };
   const handleVersionAction = () => {
     if (updateStatus === 'ready') {
@@ -88,6 +169,58 @@ const DesktopSettingsSections = ({
     }
     void checkForUpdates(true);
   };
+  const handleAuthorizeCli = async () => {
+    setDeviceCodeBusy(true);
+    try {
+      await approveCliDevice(deviceCode);
+      setDeviceCode('');
+      onDeviceCodeAuthorized?.();
+      notify(desktopLabels.cliAuthorized);
+    } catch (error) {
+      console.warn('Unable to authorize CLI device.', error);
+      notify(desktopLabels.cliAuthorizationFailed, 'error');
+    } finally {
+      setDeviceCodeBusy(false);
+    }
+  };
+  const refreshActivity = async () => {
+    setActivityBusy(true);
+    try {
+      setActivity(await loadWorkspaceAudit());
+    } catch (error) {
+      console.warn('Unable to load CLI activity.', error);
+    } finally {
+      setActivityBusy(false);
+    }
+  };
+  const handleUndoMutation = (mutation: WorkspaceMutationAudit) => {
+    confirm({
+      cancelText: labels.cancel,
+      confirmText: desktopLabels.undoMutation,
+      message: desktopLabels.undoMutationMessage,
+      onConfirm: () => {
+        setActivityBusy(true);
+        void undoWorkspaceMutation(mutation.id)
+          .then(reloadAppStateFromRemote)
+          .then(refreshActivity)
+          .then(() => notify(desktopLabels.mutationUndone))
+          .catch((error) => {
+            console.warn('Unable to undo CLI mutation.', error);
+            notify(desktopLabels.backupFailed, 'error');
+          })
+          .finally(() => setActivityBusy(false));
+      },
+      title: desktopLabels.undoMutationTitle,
+    });
+  };
+
+  useEffect(() => {
+    if (environment.isDesktop && authenticated) {
+      void refreshActivity();
+    } else {
+      setActivity([]);
+    }
+  }, [authenticated, environment.isDesktop]);
   const reminderOptions: SettingOption<
     DesktopPreferences['updateReminder']
   >[] = [
@@ -148,37 +281,155 @@ const DesktopSettingsSections = ({
   return (
     <>
       {environment.isDesktop ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            {desktopLabels.softwareUpdate}
-          </Text>
-          {updateInfo || updateStatus === 'error' ? (
-            <View
-              style={[
-                styles.updateNotice,
-                updateStatus === 'error' && styles.updateNoticeError,
-              ]}
-            >
-              <Ionicons
-                color={updateStatus === 'error' ? '#B44758' : '#6759E8'}
-                name={
-                  updateStatus === 'error'
-                    ? 'alert-circle-outline'
-                    : 'download-outline'
-                }
-                size={18}
-              />
-              <View style={styles.noticeCopy}>
-                <Text style={styles.noticeTitle}>{updateStateLabel}</Text>
-                <Text style={styles.noticeDescription}>
-                  {updateStatus === 'error'
-                    ? updateError || desktopLabels.tryAgain
-                    : updateInfo?.body || desktopLabels.updateFallbackBody}
-                </Text>
+        <>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {desktopLabels.dataBackup}
+            </Text>
+            <View style={styles.sectionCard}>
+              <SettingRow
+                description={desktopLabels.dataBackupDescription}
+                focused={focusedRow === 'data-backup'}
+                stacked={stacked}
+                title={desktopLabels.dataBackup}
+              >
+                <View style={styles.backupActions}>
+                  <ActionButton
+                    disabled={backupBusy}
+                    label={desktopLabels.exportBackup}
+                    onFocusChange={focus('data-backup')}
+                    onPress={() => void handleExportBackup()}
+                    size="small"
+                    variant="secondary"
+                  />
+                  <ActionButton
+                    disabled={backupBusy}
+                    label={desktopLabels.importBackup}
+                    onFocusChange={focus('data-backup')}
+                    onPress={() => void handleImportBackup()}
+                    size="small"
+                    variant="secondary"
+                  />
+                </View>
+              </SettingRow>
+            </View>
+          </View>
+
+          {authenticated ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>
+                {desktopLabels.cliAccess}
+              </Text>
+              <View style={styles.sectionCard}>
+                <SettingRow
+                  description={desktopLabels.cliAccessDescription}
+                  focused={focusedRow === 'cli-access'}
+                  stacked={stacked}
+                  title={desktopLabels.cliAccess}
+                >
+                  <View style={styles.cliAccessControl}>
+                    <TextInput
+                      {...inputAccentProps}
+                      accessibilityLabel={
+                        desktopLabels.cliDeviceCodePlaceholder
+                      }
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      maxLength={9}
+                      onBlur={() => setFocusedRow(null)}
+                      onChangeText={(value) =>
+                        setDeviceCode(value.toUpperCase())
+                      }
+                      onFocus={() => setFocusedRow('cli-access')}
+                      placeholder={desktopLabels.cliDeviceCodePlaceholder}
+                      style={styles.cliCodeInput}
+                      value={deviceCode}
+                    />
+                    <ActionButton
+                      disabled={
+                        deviceCodeBusy ||
+                        !/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(deviceCode)
+                      }
+                      label={desktopLabels.cliAuthorize}
+                      onFocusChange={focus('cli-access')}
+                      onPress={() => void handleAuthorizeCli()}
+                      size="small"
+                    />
+                  </View>
+                </SettingRow>
+                <SettingRow
+                  description={
+                    activity.length === 0
+                      ? desktopLabels.cliActivityEmpty
+                      : undefined
+                  }
+                  focused={false}
+                  stacked
+                  title={desktopLabels.cliActivity}
+                >
+                  <View style={styles.activityList}>
+                    {activity.slice(0, 5).map((mutation, index) => (
+                      <View key={mutation.id} style={styles.activityRow}>
+                        <View style={styles.activityCopy}>
+                          <Text style={styles.activityAction}>
+                            {mutation.action}
+                          </Text>
+                          <Text style={styles.activityMeta}>
+                            {new Date(mutation.createdAt).toLocaleString()}
+                            {` · ${mutation.actorId.slice(0, 8)}`}
+                            {mutation.undoneAt
+                              ? ` · ${desktopLabels.mutationUndone}`
+                              : ''}
+                          </Text>
+                        </View>
+                        {index === 0 && !mutation.undoneAt ? (
+                          <ActionButton
+                            disabled={activityBusy}
+                            label={desktopLabels.undoMutation}
+                            onPress={() => handleUndoMutation(mutation)}
+                            size="small"
+                            variant="secondary"
+                          />
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                </SettingRow>
               </View>
             </View>
           ) : null}
-          <View style={styles.sectionCard}>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {desktopLabels.softwareUpdate}
+            </Text>
+            {updateInfo || updateStatus === 'error' ? (
+              <View
+                style={[
+                  styles.updateNotice,
+                  updateStatus === 'error' && styles.updateNoticeError,
+                ]}
+              >
+                <Ionicons
+                  color={updateStatus === 'error' ? '#B44758' : '#6759E8'}
+                  name={
+                    updateStatus === 'error'
+                      ? 'alert-circle-outline'
+                      : 'download-outline'
+                  }
+                  size={18}
+                />
+                <View style={styles.noticeCopy}>
+                  <Text style={styles.noticeTitle}>{updateStateLabel}</Text>
+                  <Text style={styles.noticeDescription}>
+                    {updateStatus === 'error'
+                      ? updateError || desktopLabels.tryAgain
+                      : updateInfo?.body || desktopLabels.updateFallbackBody}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+            <View style={styles.sectionCard}>
             <SettingRow
               description={desktopLabels.updateCheckDescription}
               focused={focusedRow === 'version'}
@@ -244,8 +495,9 @@ const DesktopSettingsSections = ({
                 width={controlWidth}
               />
             </SettingRow>
+            </View>
           </View>
-        </View>
+        </>
       ) : null}
 
       {environment.isMacos ? (

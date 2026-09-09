@@ -21,7 +21,11 @@ vi.mock('../services/indexedDbStorage', () => ({
   saveWebState: vi.fn(),
 }));
 
-import { parsePersistedAppState } from '../services/todoStorage';
+import {
+  createAppStateBackup,
+  parseAppStateBackup,
+  parsePersistedAppState,
+} from '../services/todoStorage';
 
 const inboxProject = {
   id: 'inbox',
@@ -185,6 +189,39 @@ describe('persisted state V12 validation', () => {
     expect(
       parsePersistedAppState(
         JSON.stringify({ ...state, projects: undefined }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('app-state backups', () => {
+  it('round-trips a validated V12 aggregate in a versioned envelope', () => {
+    const validated = parsePersistedAppState(JSON.stringify(state));
+    expect(validated).not.toBeNull();
+    const backup = createAppStateBackup(validated!, 123);
+    const parsedEnvelope = JSON.parse(backup);
+
+    expect(parsedEnvelope).toMatchObject({
+      createdAt: 123,
+      format: 'lightflux-app-state',
+      version: 1,
+    });
+    expect(parseAppStateBackup(backup)).toMatchObject({
+      schemaVersion: 12,
+      todos: [expect.objectContaining({ id: 'task' })],
+    });
+  });
+
+  it('rejects unknown envelopes and invalid persisted state', () => {
+    expect(parseAppStateBackup('{}')).toBeNull();
+    expect(
+      parseAppStateBackup(
+        JSON.stringify({
+          createdAt: 123,
+          format: 'lightflux-app-state',
+          state: { ...state, schemaVersion: 11 },
+          version: 1,
+        }),
       ),
     ).toBeNull();
   });

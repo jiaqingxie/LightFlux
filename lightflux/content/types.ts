@@ -65,6 +65,28 @@ export interface Translation {
     updateToVersion: (version: string) => string;
     settings: {
       general: string;
+      dataBackup: string;
+      dataBackupDescription: string;
+      exportBackup: string;
+      importBackup: string;
+      backupExported: string;
+      backupRestored: string;
+      backupFailed: string;
+      restoreBackupTitle: string;
+      restoreBackupMessage: string;
+      restoreBackupConfirm: string;
+      cliAccess: string;
+      cliAccessDescription: string;
+      cliDeviceCodePlaceholder: string;
+      cliAuthorize: string;
+      cliAuthorized: string;
+      cliAuthorizationFailed: string;
+      cliActivity: string;
+      cliActivityEmpty: string;
+      undoMutation: string;
+      undoMutationTitle: string;
+      undoMutationMessage: string;
+      mutationUndone: string;
       softwareUpdate: string;
       updateReminderOptions: {
         sidebarAndToast: string;
@@ -310,6 +332,8 @@ export interface Translation {
     metadataTitle: string;
     dateLabel: string;
     projectLabel: string;
+    milestoneLabel: string;
+    noMilestone: string;
     priorityLabel: string;
     scheduleToday: string;
     scheduleTomorrow: string;

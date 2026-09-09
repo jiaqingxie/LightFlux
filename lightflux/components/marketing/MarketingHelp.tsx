@@ -70,7 +70,7 @@ const FAQS = [
   },
   {
     answer:
-      '当前公开桌面 Release 提供 macOS Apple Silicon、macOS Intel 和 Windows x64。Web 版可以直接打开。',
+      '当前公开桌面 Release 提供 macOS Apple Silicon、macOS Intel 和 Windows x64。CLI 可通过桌面端设备码授权。',
     keywords: '下载 macOS Windows Web 平台',
     question: '桌面版支持哪些平台？',
   },

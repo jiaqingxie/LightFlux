@@ -42,6 +42,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["lightflux"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/little1d/LightFlux/releases/latest/download/latest.json"

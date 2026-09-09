@@ -29,6 +29,8 @@ export const editor: Translation['editor'] = {
   metadataTitle: '任务信息',
   dateLabel: '日期',
   projectLabel: '项目',
+  milestoneLabel: '重要节点',
+  noMilestone: '无重要节点',
   priorityLabel: '优先级',
   scheduleToday: '今天',
   scheduleTomorrow: '明天',

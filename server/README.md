@@ -1,7 +1,9 @@
 # LightFlux API
 
 Node.js backend for email OTP authentication, PostgreSQL-backed cloud state,
-image uploads, the AI Agent proxy, and legacy WeChat authentication.
+image uploads, and the AI Agent proxy. Legacy WeChat identities and sessions
+remain readable for data compatibility, but WeChat is not a maintained login
+platform.
 
 ## Local setup
 
@@ -83,6 +85,8 @@ Current history:
   synchronization.
 - `004_email_auth_accounts_issuer.sql`: aligns the credential-account unique
   key and nullable issuer with Better Auth's actual account model.
+- `005_workspace_api.sql`: device authorization, scoped CLI tokens,
+  idempotent mutation audit records, and task comments.
 
 For a schema change, add the next `NNN_description.sql`, migrate the development
 database, and run the server tests before deployment. Never rewrite an applied
@@ -106,10 +110,11 @@ When Caddy or Nginx is the only public path to the API, configure
 `AUTH_IP_ADDRESS_HEADERS` and `AUTH_TRUSTED_PROXIES` to match that proxy. Do
 not trust forwarded IP headers while the Node port is directly reachable.
 
-Expo native clients persist Better Auth cookies in SecureStore. Login is
-considered complete only after the client restores the session and reconciles
-the account-scoped cloud state; sync, image uploads, and Agent calls all use
-the same authenticated fetch boundary.
+Tauri persists the server-issued Better Auth session token outside the WebView
+cookie jar and sends it as a Bearer token. Login is considered complete only
+after the client restores the session and reconciles the account-scoped cloud
+state; sync, image uploads, and Agent calls all use the same authenticated
+fetch boundary.
 
 ## Importing the old JSON repository
 
@@ -126,18 +131,13 @@ session token hashes, and app state. It never writes raw session tokens.
 Keep the JSON file until user, identity, session, and app-state counts have
 been checked in PostgreSQL.
 
-## WeChat applications
+## Legacy WeChat compatibility
 
-- Web: approved Website Application, callback domain, and
-  `WECHAT_WEB_REDIRECT_URI`.
-- iOS/Android: approved Mobile Application, iOS Universal Link, Android
-  package name, and release signing fingerprint.
-- `AppSecret` values belong only in `server/.env`, never in Expo public
-  environment variables.
-
-The service starts without WeChat credentials so `/health` can be used during
-setup, but authorization endpoints return `503` until the relevant application
-is configured.
+Existing WeChat identity and session records are retained so migrations and
+old data are not silently discarded. New deployments must use email
+authentication and should leave all `WECHAT_*` variables unset. The legacy
+routes are compatibility code only and receive no new platform integration
+work.
 
 ## AI Agent
 
@@ -171,15 +171,30 @@ TEST_DATABASE_URL=postgresql://... npm run test:postgres
 - `POST /api/auth/email/sign-in/email-otp`
 - `GET /api/auth/email/get-session`
 - `POST /api/auth/email/sign-out`
-- `GET /api/auth/wechat/web/start`
-- `GET /api/auth/wechat/web/callback`
-- `GET /api/auth/wechat/mobile/state`
-- `POST /api/auth/wechat/mobile/exchange`
 - `GET /api/auth/session`
 - `POST /api/auth/logout`
 - `GET /api/app-state`
 - `PUT /api/app-state`
+- `POST /api/v1/auth/device`
+- `POST /api/v1/auth/device/approve`
+- `POST /api/v1/auth/device/token`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/workspaces`
+- `GET /api/v1/workspaces/:workspaceId/projects`
+- `GET|POST /api/v1/workspaces/:workspaceId/milestones`
+- `GET|POST /api/v1/projects/:projectId/tasks`
+- `GET /api/v1/tasks/:taskId`
+- `POST /api/v1/tasks/:taskId/mutations`
+- `POST /api/v1/tasks/:taskId/comments`
+- `GET /api/v1/milestones/:milestoneId`
+- `POST /api/v1/milestones/:milestoneId/mutations`
+- `GET /api/v1/workspaces/:workspaceId/audit`
+- `POST /api/v1/mutations/:mutationId/undo`
 - `POST /api/uploads`
 - `GET /uploads/:filename`
 - `POST /api/ai/turns`
 - `POST /api/ai/proposals/:id/result`
+
+The versioned Workspace API currently exposes one Personal Workspace per
+account. Project mutations remain desktop-owned; the CLI can list Projects and
+perform scoped task, subtask, rich-text, and Milestone mutations.

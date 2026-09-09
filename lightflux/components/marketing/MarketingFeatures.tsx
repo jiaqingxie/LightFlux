@@ -141,15 +141,15 @@ const MarketingFeatures = () => {
         </Text>
         <View style={styles.heroActions}>
           <MarketingLink
-            href="/today"
-            icon="arrow-forward"
-            label="打开 Web 版"
+            href="/download"
+            icon="download-outline"
+            label="下载桌面版"
             variant="primary"
           />
           <MarketingLink
-            href="/download"
-            icon="download-outline"
-            label="下载应用"
+            href="/help"
+            icon="arrow-forward"
+            label="了解使用方式"
             variant="secondary"
           />
         </View>

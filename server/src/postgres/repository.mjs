@@ -269,6 +269,177 @@ export const createPostgresRepository = ({ pool }) => {
     await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
   };
 
+  const createDeviceAuthorization = async ({
+    deviceCodeHash,
+    userCode,
+    createdAt,
+    expiresAt,
+  }) => {
+    await pool.query(
+      'DELETE FROM cli_device_authorizations WHERE expires_at <= now()',
+    );
+    await pool.query(
+      'DELETE FROM api_tokens WHERE expires_at <= now() OR revoked_at IS NOT NULL',
+    );
+    await pool.query(
+      `INSERT INTO cli_device_authorizations (
+         device_code_hash, user_code, status, created_at, expires_at
+       ) VALUES ($1, $2, 'pending', $3, $4)`,
+      [
+        deviceCodeHash,
+        userCode,
+        asDate(createdAt),
+        asDate(expiresAt),
+      ],
+    );
+  };
+
+  const approveDeviceAuthorization = async ({ userCode, userId }) => {
+    const result = await pool.query(
+      `UPDATE cli_device_authorizations
+       SET user_id = $2, status = 'approved', approved_at = now()
+       WHERE user_code = $1
+         AND status = 'pending'
+         AND expires_at > now()
+       RETURNING user_code`,
+      [userCode, userId],
+    );
+    return result.rowCount === 1;
+  };
+
+  const consumeDeviceAuthorization = async ({
+    deviceCodeHash,
+    tokenHash,
+    tokenId,
+    scopes,
+    createdAt,
+    expiresAt,
+  }) =>
+    transaction(pool, async (client) => {
+      const authorization = await client.query(
+        `SELECT user_id, status, expires_at
+         FROM cli_device_authorizations
+         WHERE device_code_hash = $1
+         FOR UPDATE`,
+        [deviceCodeHash],
+      );
+      const row = authorization.rows[0];
+      if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+        return { status: 'expired' };
+      }
+      if (row.status === 'pending') {
+        return { status: 'pending' };
+      }
+      if (row.status !== 'approved' || !row.user_id) {
+        return { status: 'consumed' };
+      }
+
+      await client.query(
+        `INSERT INTO api_tokens (
+           id, user_id, token_hash, scopes, created_at, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          tokenId,
+          row.user_id,
+          tokenHash,
+          scopes.join(' '),
+          asDate(createdAt),
+          asDate(expiresAt),
+        ],
+      );
+      await client.query(
+        `UPDATE cli_device_authorizations
+         SET status = 'consumed', consumed_at = now()
+         WHERE device_code_hash = $1`,
+        [deviceCodeHash],
+      );
+      return { status: 'approved', userId: row.user_id };
+    });
+
+  const findApiTokenByHash = async (hash) => {
+    const result = await pool.query(
+      `SELECT
+         t.id AS token_id,
+         t.user_id,
+         t.scopes,
+         t.expires_at,
+         u.display_name,
+         u.avatar_url
+       FROM api_tokens t
+       JOIN users u ON u.id = t.user_id
+       WHERE t.token_hash = $1
+         AND t.expires_at > now()
+         AND t.revoked_at IS NULL
+       LIMIT 1`,
+      [hash],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          scopes: String(row.scopes).split(' ').filter(Boolean),
+          session: {
+            id: row.token_id,
+            userId: row.user_id,
+            expiresAt: row.expires_at,
+          },
+          user: {
+            id: row.user_id,
+            displayName: row.display_name,
+            avatarUrl: row.avatar_url,
+          },
+        }
+      : null;
+  };
+
+  const revokeApiToken = async (hash) => {
+    const result = await pool.query(
+      `UPDATE api_tokens
+       SET revoked_at = now()
+       WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [hash],
+    );
+    return result.rowCount > 0;
+  };
+
+  const findEmailSessionByToken = async (token) => {
+    const result = await pool.query(
+      `SELECT
+         s.id AS session_id,
+         s.auth_user_id,
+         s.expires_at,
+         u.email,
+         u.name,
+         u.image
+       FROM email_auth_sessions s
+       JOIN email_auth_users u ON u.id = s.auth_user_id
+       WHERE s.token = $1 AND s.expires_at > now()
+       LIMIT 1`,
+      [token],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          session: {
+            id: row.session_id,
+            userId: row.auth_user_id,
+            expiresAt: row.expires_at,
+          },
+          user: {
+            id: row.auth_user_id,
+            email: row.email,
+            name: row.name,
+            image: row.image,
+          },
+        }
+      : null;
+  };
+
+  const deleteEmailSession = async (sessionId) => {
+    await pool.query('DELETE FROM email_auth_sessions WHERE id = $1', [
+      sessionId,
+    ]);
+  };
+
   const getAppStateSnapshot = async (userId) => {
     const result = await pool.query(
       'SELECT state, revision FROM app_states WHERE user_id = $1',
@@ -372,6 +543,277 @@ export const createPostgresRepository = ({ pool }) => {
       };
     });
   };
+
+  const mutateAppState = async ({
+    action,
+    actorId,
+    entityKind = 'task',
+    entityId,
+    idempotencyKey,
+    mutate,
+    requestHash,
+    userId,
+  }) =>
+    transaction(pool, async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `app-state:${userId}`,
+      ]);
+      const replay = await client.query(
+        `SELECT request_hash, result_entity, result_revision, id, entity_id
+         FROM workspace_mutations
+         WHERE user_id = $1 AND idempotency_key = $2`,
+        [userId, idempotencyKey],
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) {
+          const error = new Error(
+            'The idempotency key was already used for another request.',
+          );
+          error.status = 409;
+          throw error;
+        }
+        return {
+          entityId: replay.rows[0].entity_id,
+          mutationId: replay.rows[0].id,
+          replayed: true,
+          revision: Number(replay.rows[0].result_revision),
+          entity: replay.rows[0].result_entity,
+        };
+      }
+
+      const current = await client.query(
+        `SELECT state, revision
+         FROM app_states
+         WHERE user_id = $1
+         FOR UPDATE`,
+        [userId],
+      );
+      if (!current.rows[0]) {
+        const error = new Error(
+          'No synchronized desktop state exists for this Workspace.',
+        );
+        error.status = 409;
+        throw error;
+      }
+      const beforeState = current.rows[0].state;
+      const baseRevision = Number(current.rows[0].revision);
+      const afterState = await mutate(structuredClone(beforeState));
+      const entities =
+        entityKind === 'milestone'
+          ? afterState.milestones
+          : afterState.todos;
+      const resultEntity = entities?.find((item) => item.id === entityId);
+      if (!resultEntity) {
+        throw new Error('Workspace mutation did not produce its entity.');
+      }
+      const nextRevision = baseRevision + 1;
+      await client.query(
+        `UPDATE app_states
+         SET state = $2::jsonb,
+             state_updated_at = $3,
+             revision = $4,
+             updated_at = now()
+         WHERE user_id = $1`,
+        [
+          userId,
+          JSON.stringify(afterState),
+          Number(afterState.updatedAt),
+          nextRevision,
+        ],
+      );
+      const mutationId = randomUUID();
+      await client.query(
+        `INSERT INTO workspace_mutations (
+           id, user_id, actor_id, idempotency_key, request_hash, action, entity_id,
+           before_state, result_entity, base_revision, result_revision,
+           created_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, now()
+         )`,
+        [
+          mutationId,
+          userId,
+          actorId,
+          idempotencyKey,
+          requestHash,
+          action,
+          entityId ?? null,
+          JSON.stringify(beforeState),
+          JSON.stringify(resultEntity),
+          baseRevision,
+          nextRevision,
+        ],
+      );
+      return {
+        entityId: entityId ?? null,
+        entity: resultEntity,
+        mutationId,
+        replayed: false,
+        revision: nextRevision,
+      };
+    });
+
+  const addTaskComment = async ({
+    body,
+    idempotencyKey,
+    requestHash,
+    taskId,
+    userId,
+  }) =>
+    transaction(pool, async (client) => {
+      const replay = await client.query(
+        `SELECT id, task_id, body, created_at, request_hash
+         FROM task_comments
+         WHERE user_id = $1 AND idempotency_key = $2`,
+        [userId, idempotencyKey],
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== requestHash) {
+          const error = new Error(
+            'The idempotency key was already used for another request.',
+          );
+          error.status = 409;
+          throw error;
+        }
+        return {
+          id: replay.rows[0].id,
+          taskId: replay.rows[0].task_id,
+          body: replay.rows[0].body,
+          createdAt: new Date(replay.rows[0].created_at).toISOString(),
+          replayed: true,
+        };
+      }
+      const id = randomUUID();
+      const createdAt = new Date();
+      await client.query(
+        `INSERT INTO task_comments (
+           id, user_id, task_id, idempotency_key, request_hash, body,
+           created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          id,
+          userId,
+          taskId,
+          idempotencyKey,
+          requestHash,
+          body,
+          createdAt,
+        ],
+      );
+      return {
+        id,
+        taskId,
+        body,
+        createdAt: createdAt.toISOString(),
+        replayed: false,
+      };
+    });
+
+  const listTaskComments = async ({ taskId, userId }) => {
+    const result = await pool.query(
+      `SELECT id, task_id, body, created_at
+       FROM task_comments
+       WHERE user_id = $1 AND task_id = $2
+       ORDER BY created_at, id`,
+      [userId, taskId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      taskId: row.task_id,
+      body: row.body,
+      createdAt: new Date(row.created_at).toISOString(),
+    }));
+  };
+
+  const listWorkspaceMutations = async ({ limit = 20, userId }) => {
+    const result = await pool.query(
+      `SELECT
+         id, actor_id, action, entity_id, base_revision, result_revision,
+         created_at, undone_at
+       FROM workspace_mutations
+       WHERE user_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2`,
+      [userId, limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      actorId: row.actor_id,
+      action: row.action,
+      entityId: row.entity_id,
+      baseRevision: Number(row.base_revision),
+      resultRevision: Number(row.result_revision),
+      createdAt: new Date(row.created_at).toISOString(),
+      undoneAt: row.undone_at
+        ? new Date(row.undone_at).toISOString()
+        : null,
+    }));
+  };
+
+  const undoWorkspaceMutation = async ({ mutationId, userId }) =>
+    transaction(pool, async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `app-state:${userId}`,
+      ]);
+      const mutationResult = await client.query(
+        `SELECT before_state, result_revision, undone_at
+         FROM workspace_mutations
+         WHERE id = $1 AND user_id = $2
+         FOR UPDATE`,
+        [mutationId, userId],
+      );
+      const mutation = mutationResult.rows[0];
+      if (!mutation) {
+        const error = new Error('Mutation not found.');
+        error.status = 404;
+        throw error;
+      }
+      if (mutation.undone_at) {
+        const error = new Error('Mutation was already undone.');
+        error.status = 409;
+        throw error;
+      }
+      const currentResult = await client.query(
+        `SELECT state, revision
+         FROM app_states
+         WHERE user_id = $1
+         FOR UPDATE`,
+        [userId],
+      );
+      const current = currentResult.rows[0];
+      if (
+        !current ||
+        Number(current.revision) !== Number(mutation.result_revision)
+      ) {
+        const error = new Error(
+          'Only the latest Workspace mutation can be undone.',
+        );
+        error.status = 409;
+        throw error;
+      }
+      const state = structuredClone(mutation.before_state);
+      state.updatedAt = Math.max(
+        Date.now(),
+        Number(current.state?.updatedAt ?? 0) + 1,
+      );
+      const revision = Number(current.revision) + 1;
+      await client.query(
+        `UPDATE app_states
+         SET state = $2::jsonb,
+             state_updated_at = $3,
+             revision = $4,
+             updated_at = now()
+         WHERE user_id = $1`,
+        [userId, JSON.stringify(state), state.updatedAt, revision],
+      );
+      await client.query(
+        `UPDATE workspace_mutations
+         SET undone_at = now()
+         WHERE id = $1`,
+        [mutationId],
+      );
+      return { revision, state };
+    });
 
   const importLegacySnapshot = async (snapshot) =>
     transaction(pool, async (client) => {
@@ -482,15 +924,27 @@ export const createPostgresRepository = ({ pool }) => {
     });
 
   return {
+    addTaskComment,
+    approveDeviceAuthorization,
     close: () => pool.end(),
+    consumeDeviceAuthorization,
+    createDeviceAuthorization,
     createSession,
+    deleteEmailSession,
     deleteSession,
+    findApiTokenByHash,
+    findEmailSessionByToken,
     findSessionByTokenHash,
     getAppState,
     getAppStateSnapshot,
     healthcheck,
     importLegacySnapshot,
+    listTaskComments,
+    listWorkspaceMutations,
+    mutateAppState,
     putAppState,
+    revokeApiToken,
+    undoWorkspaceMutation,
     upsertFederatedUser,
     upsertWechatUser,
   };

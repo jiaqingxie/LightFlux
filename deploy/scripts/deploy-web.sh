@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Build and deploy the LightFlux Web app (exported Expo bundle) to the server.
 #
-# The web app is a static SPA served by nginx from /opt/lightflux/web and calls
-# the same-origin API at https://lightflux.site/api. This script builds the
-# export locally (so EXPO_PUBLIC_* values are baked in from lightflux/.env) and
-# syncs the result to the server.
+# The optional Web surface is a static SPA served by nginx from
+# /opt/lightflux/web. This script builds the export locally, baking the
+# EXPO_PUBLIC_* origins from lightflux/.env into the bundle, then syncs it.
 #
 # Runs from a workstation (needs node + rsync + ssh) or from CI. Configure the
 # target with environment variables:

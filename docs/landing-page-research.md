@@ -212,7 +212,7 @@ Important gaps:
   with the workflow.
 - macOS uses ad-hoc signing and Windows is unsigned, so broad public download
   promotion would expose Gatekeeper or SmartScreen warnings.
-- iOS and Android applications are not yet published to public stores.
+- iOS and Android applications are outside the maintained product scope.
 
 The download page must derive the latest version and asset URLs from the main
 repository's public GitHub Release instead of hard-coding versioned filenames.
@@ -254,7 +254,7 @@ later.
 7. Platform section
    - Web, macOS, and Windows as currently verified.
    - Linux only after a public artifact exists.
-   - iOS/Android shown only as development targets until store links exist.
+   - Do not advertise iOS or Android targets.
 8. FAQ
    - Local data behavior.
    - Whether an account is required.
@@ -319,8 +319,7 @@ recording that demonstrates the stated behavior.
 - Add checksum/signature information when it is useful to end users.
 - Explain unsigned-build warnings until signing and notarization are complete.
 - Add Linux only after a release contains verified AppImage/deb assets.
-- Add App Store and Google Play buttons only after real public listing URLs
-  exist.
+- Do not add App Store, Google Play, or WeChat distribution actions.
 
 ## Asset Plan
 
@@ -430,7 +429,7 @@ placeholder images.
 - [x] Add the public GitHub Release page as the first-version fallback.
 - [x] Display current signing/notarization status.
 - [ ] Publish and verify Linux artifacts before enabling Linux.
-- [ ] Add iOS/Android store links only after public releases exist.
+- [x] Remove iOS/Android store plans from the maintained product surface.
 
 ### P6 - Help, legal, quality, and launch
 

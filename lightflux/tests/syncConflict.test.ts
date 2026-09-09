@@ -261,6 +261,28 @@ describe('revision conflict recovery', () => {
     });
   });
 
+  it('does not advance the revision for an unchanged synchronized state', async () => {
+    vi.resetModules();
+    const remote = state(20, 'Remote edit', 'Second');
+    loadRemoteAppState.mockResolvedValue({
+      ownerId: 'owner',
+      revision: 4,
+      state: remote,
+    });
+    const { saveAppState, synchronizeAppState } = await import(
+      '../services/todoStorage'
+    );
+    await synchronizeAppState(remote);
+    saveRemoteAppState.mockClear();
+
+    await saveAppState(structuredClone(remote));
+
+    expect(saveRemoteAppState).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(storage.get('lightflux.sync-metadata.v12') ?? '{}'),
+    ).toMatchObject({ ownerId: 'owner', revision: 4 });
+  });
+
   it('requires an authenticated snapshot after native sign-in', async () => {
     vi.resetModules();
     loadRemoteAppState.mockResolvedValue(null);

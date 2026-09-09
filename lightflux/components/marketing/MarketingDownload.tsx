@@ -16,6 +16,7 @@ import MarketingLayout, {
 
 const RELEASE_URL =
   'https://github.com/little1d/LightFlux/releases/latest';
+const CLI_URL = 'https://github.com/little1d/LightFlux/tree/main/cli';
 
 interface PlatformItem {
   action: string;
@@ -27,14 +28,6 @@ interface PlatformItem {
 }
 
 const PLATFORMS: PlatformItem[] = [
-  {
-    action: '直接打开',
-    description: '无需安装，在现代浏览器中使用完整的本地模式与云同步。',
-    href: '/today',
-    icon: 'globe-outline' as const,
-    status: '可用',
-    title: 'Web',
-  },
   {
     action: '前往 Release',
     description: '提供 Apple Silicon 与 Intel 两种 DMG，请按 Mac 芯片选择。',
@@ -57,17 +50,6 @@ const PLATFORMS: PlatformItem[] = [
     icon: 'terminal-outline' as const,
     status: '即将提供',
     title: 'Linux',
-  },
-];
-
-const FUTURE_PLATFORMS = [
-  {
-    icon: 'logo-apple-appstore' as const,
-    label: 'iOS / iPadOS',
-  },
-  {
-    icon: 'logo-google-playstore' as const,
-    label: 'Android',
   },
 ];
 
@@ -94,9 +76,9 @@ const PlatformCard = ({
       {href ? (
         <MarketingLink
           href={href as Href}
-          icon={title === 'Web' ? 'arrow-forward' : 'open-outline'}
+          icon="open-outline"
           label={action}
-          variant={title === 'Web' ? 'primary' : 'secondary'}
+          variant="secondary"
         />
       ) : (
         <View style={styles.disabledAction}>
@@ -114,7 +96,7 @@ const DeviceScene = () => {
 
   return (
     <View
-      accessibilityLabel="LightFlux Web、macOS 和 Windows 多端预览"
+      accessibilityLabel="LightFlux macOS 和 Windows 桌面端预览"
       style={[
         styles.deviceScene,
         compact && styles.deviceSceneCompact,
@@ -180,33 +162,6 @@ const DeviceScene = () => {
         </View>
       </View>
     </View>
-    <View
-      style={[
-        styles.phoneDevice,
-        compact && styles.phoneDeviceCompact,
-      ]}
-    >
-      <View style={styles.phoneSpeaker} />
-      <View style={styles.phoneHeader}>
-        <Text style={styles.phoneHeaderText}>今天</Text>
-        <Ionicons color="#6759E8" name="sparkles" size={13} />
-      </View>
-      {['发布检查', '整理说明', '回顾计划'].map((item, index) => (
-        <View key={item} style={styles.phoneTask}>
-          <View
-            style={[
-              styles.phoneCheckbox,
-              index === 1 && styles.phoneCheckboxDone,
-            ]}
-          >
-            {index === 1 ? (
-              <Ionicons color="#FFFFFF" name="checkmark" size={8} />
-            ) : null}
-          </View>
-          <Text style={styles.phoneTaskText}>{item}</Text>
-        </View>
-      ))}
-    </View>
     </View>
   );
 };
@@ -218,7 +173,7 @@ const MarketingDownload = () => {
 
   return (
     <MarketingLayout
-      description="在 Web、macOS 和 Windows 上使用 LightFlux。查看当前版本、平台状态和桌面安装方式。"
+      description="在 macOS 和 Windows 上使用 LightFlux，并通过 CLI 连接 Agent 工作流。"
       path="/download"
       title="下载 LightFlux"
     >
@@ -228,21 +183,21 @@ const MarketingDownload = () => {
           <Text style={styles.heroTitle}>在熟悉的平台继续你的计划</Text>
           {!short ? (
             <Text style={styles.heroDescription}>
-              Web 版无需安装。macOS 与 Windows 桌面版通过公开 GitHub
-              Release 发布，并与 Web 使用相同的任务体验。
+              macOS 与 Windows 桌面版通过公开 GitHub Release 发布。
+              CLI 提供脚本化任务操作与 Agent Skill。
             </Text>
           ) : null}
           <View style={styles.heroActions}>
             <MarketingLink
-              href="/today"
-              icon="arrow-forward"
-              label="打开 Web 版"
+              href={RELEASE_URL as Href}
+              icon="download-outline"
+              label="下载桌面版"
               variant="primary"
             />
             <MarketingLink
-              href={RELEASE_URL as Href}
+              href={CLI_URL as Href}
               icon="open-outline"
-              label="查看最新 Release"
+              label="查看 CLI"
               variant="secondary"
             />
           </View>
@@ -250,9 +205,9 @@ const MarketingDownload = () => {
         {short ? (
           <View style={styles.shortPlatforms}>
             {[
-              ['globe-outline', 'Web'],
               ['logo-apple', 'macOS'],
               ['logo-windows', 'Windows'],
+              ['terminal-outline', 'CLI'],
             ].map(([icon, label]) => (
               <View key={label} style={styles.shortPlatform}>
                 <Ionicons
@@ -336,34 +291,10 @@ const MarketingDownload = () => {
 
       <View style={styles.noticeSection}>
         <MarketingSectionHeading
-          description="第一版官网会诚实展示现状，签名、商店审核和公开安装包完成后再切换为可下载状态。"
+          description="桌面安装包会继续通过 GitHub Release 发布。iOS、Android 与微信平台不在当前维护范围内。"
           eyebrow="发布状态"
-          title="移动端正在准备"
+          title="聚焦桌面端"
         />
-        <View
-          style={[
-            styles.futurePlatforms,
-            compact && styles.futurePlatformsCompact,
-          ]}
-        >
-          {FUTURE_PLATFORMS.map((platform) => (
-            <View key={platform.label} style={styles.futurePlatform}>
-              <Ionicons
-                color="#7B7C89"
-                name={platform.icon}
-                size={24}
-              />
-              <View style={styles.futurePlatformCopy}>
-                <Text style={styles.futurePlatformTitle}>
-                  {platform.label}
-                </Text>
-                <Text style={styles.futurePlatformStatus}>
-                  开发中 · 暂无公开商店链接
-                </Text>
-              </View>
-            </View>
-          ))}
-        </View>
         <View style={styles.signingNotice}>
           <Ionicons
             color={MARKETING_COLORS.warm}
@@ -455,7 +386,7 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   deviceScene: {
-    alignItems: 'flex-end',
+    alignItems: 'center',
     height: 410,
     justifyContent: 'center',
     position: 'relative',
@@ -474,11 +405,11 @@ const styles = StyleSheet.create({
     shadowOffset: { height: 18, width: 0 },
     shadowOpacity: 0.16,
     shadowRadius: 30,
-    width: '86%',
+    width: '100%',
   },
   desktopDeviceCompact: {
     height: 218,
-    width: '92%',
+    width: '96%',
   },
   deviceToolbar: {
     alignItems: 'center',
@@ -559,73 +490,6 @@ const styles = StyleSheet.create({
   },
   desktopCalendarDayTextActive: {
     color: '#FFFFFF',
-  },
-  phoneDevice: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#393A45',
-    borderRadius: 8,
-    borderWidth: 5,
-    bottom: 0,
-    height: 245,
-    paddingHorizontal: 10,
-    paddingTop: 12,
-    position: 'absolute',
-    right: 2,
-    shadowColor: '#2B2938',
-    shadowOffset: { height: 12, width: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 24,
-    width: 124,
-  },
-  phoneDeviceCompact: {
-    borderWidth: 4,
-    height: 182,
-    width: 94,
-  },
-  phoneSpeaker: {
-    alignSelf: 'center',
-    backgroundColor: '#292A34',
-    borderRadius: 2,
-    height: 3,
-    width: 28,
-  },
-  phoneHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 11,
-    marginTop: 13,
-  },
-  phoneHeaderText: {
-    color: '#303142',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  phoneTask: {
-    alignItems: 'center',
-    borderBottomColor: '#ECEBF1',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    minHeight: 43,
-  },
-  phoneCheckbox: {
-    alignItems: 'center',
-    borderColor: '#C5C4CE',
-    borderRadius: 5,
-    borderWidth: 1,
-    height: 15,
-    justifyContent: 'center',
-    marginRight: 7,
-    width: 15,
-  },
-  phoneCheckboxDone: {
-    backgroundColor: '#6759E8',
-    borderColor: '#6759E8',
-  },
-  phoneTaskText: {
-    color: '#555665',
-    fontSize: 8,
-    fontWeight: '700',
   },
   platformSection: {
     alignSelf: 'center',
@@ -779,36 +643,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 88,
     width: '100%',
-  },
-  futurePlatforms: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 34,
-  },
-  futurePlatformsCompact: {
-    flexDirection: 'column',
-  },
-  futurePlatform: {
-    alignItems: 'center',
-    backgroundColor: '#F4F4F7',
-    borderRadius: 8,
-    flex: 1,
-    flexDirection: 'row',
-    minHeight: 82,
-    padding: 17,
-  },
-  futurePlatformCopy: {
-    marginLeft: 13,
-  },
-  futurePlatformTitle: {
-    color: MARKETING_COLORS.ink,
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  futurePlatformStatus: {
-    color: '#858692',
-    fontSize: 9,
-    marginTop: 4,
   },
   signingNotice: {
     alignItems: 'flex-start',

@@ -350,6 +350,13 @@ const normalizeProject = (
   return null;
 };
 
+interface AppStateBackup {
+  createdAt: number;
+  format: 'lightflux-app-state';
+  state: PersistedAppState;
+  version: 1;
+}
+
 export const parsePersistedAppState = (
   rawState: string,
   now = Date.now(),
@@ -466,6 +473,41 @@ export const parsePersistedAppState = (
   }
 };
 
+export const createAppStateBackup = (
+  state: PersistedAppState,
+  createdAt = Date.now(),
+): string =>
+  JSON.stringify(
+    {
+      createdAt,
+      format: 'lightflux-app-state',
+      state,
+      version: 1,
+    } satisfies AppStateBackup,
+    null,
+    2,
+  );
+
+export const parseAppStateBackup = (
+  rawBackup: string,
+): PersistedAppState | null => {
+  try {
+    const backup = JSON.parse(rawBackup) as Partial<AppStateBackup>;
+    if (
+      backup.format !== 'lightflux-app-state' ||
+      backup.version !== 1 ||
+      typeof backup.createdAt !== 'number' ||
+      !Number.isFinite(backup.createdAt) ||
+      !backup.state
+    ) {
+      return null;
+    }
+    return parsePersistedAppState(JSON.stringify(backup.state));
+  } catch {
+    return null;
+  }
+};
+
 interface SyncMetadata {
   baseState: PersistedAppState | null;
   ownerId: string;
@@ -542,6 +584,10 @@ const saveDeviceState = async (
 
   stateFile().write(serializedState);
 };
+
+export const saveLocalAppState = async (
+  state: PersistedAppState,
+): Promise<void> => saveDeviceState(state);
 
 const parseSyncMetadata = (rawValue: string): SyncMetadata | null => {
   try {
@@ -731,6 +777,27 @@ export const synchronizeAppState = async (
   return synchronized;
 };
 
+export const reloadRemoteAppState =
+  async (): Promise<PersistedAppState> => {
+    const snapshot = await loadRemoteAppState();
+    if (!snapshot) {
+      throw new Error('An authenticated cloud session is required.');
+    }
+    const state = normalizedRemoteState(snapshot);
+    if (!state) {
+      throw new Error('The cloud Workspace has no app state.');
+    }
+    activeRemoteOwnerId = snapshot.ownerId;
+    remoteSyncEnabled = true;
+    await saveSyncMetadata({
+      baseState: state,
+      ownerId: snapshot.ownerId,
+      revision: snapshot.revision,
+    });
+    await saveDeviceState(state);
+    return state;
+  };
+
 const saveRemoteKnownState = async (
   state: PersistedAppState,
 ): Promise<PersistedAppState> => {
@@ -743,6 +810,9 @@ const saveRemoteKnownState = async (
     metadata.ownerId !== activeRemoteOwnerId
   ) {
     return (await synchronizeAppState(state)) ?? state;
+  }
+  if (appStatesEqual(state, metadata.baseState)) {
+    return state;
   }
 
   try {

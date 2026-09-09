@@ -12,13 +12,13 @@ contract remains distinct from future npm package tags.
 
 ## Product Model
 
-Every authenticated account owns one Personal Workspace. Before sign-in it is
-device-only; after sign-in the same Workspace becomes cloud-synchronized.
-There is no separate Local Workspace in the product model.
+Every authenticated account currently owns one Personal Workspace. Before
+sign-in the device state is local-only; after sign-in it becomes
+cloud-synchronized. There is no separate Local Workspace in the product model.
 
-Team Workspaces add members, roles, service accounts, and audit history.
-Existing LightFlux Groups migrate to Projects while preserving IDs. Ungrouped
-tasks migrate to an Inbox Project.
+Team Workspaces, members, roles, and service accounts remain future work.
+Existing LightFlux Groups migrated to Projects while preserving IDs.
+Ungrouped tasks migrated to the reserved Inbox Project.
 
 ```text
 Account
@@ -34,38 +34,49 @@ Account
 
 ## Public API Dependency
 
-The CLI expects these 0.1.1 endpoints:
+The CLI uses these versioned endpoints:
 
 ```text
 GET /api/v1/workspaces
 GET /api/v1/workspaces/:workspaceId/projects
+GET|POST /api/v1/workspaces/:workspaceId/milestones
 GET /api/v1/projects/:projectId/tasks
+POST /api/v1/projects/:projectId/tasks
 GET /api/v1/tasks/:taskId
 POST /api/v1/tasks/:taskId/mutations
 POST /api/v1/tasks/:taskId/comments
-GET /api/v1/workspaces/:workspaceId/changes?cursor=...
+GET /api/v1/milestones/:milestoneId
+POST /api/v1/milestones/:milestoneId/mutations
+GET /api/v1/workspaces/:workspaceId/audit
+POST /api/v1/mutations/:mutationId/undo
+POST /api/v1/auth/device
+POST /api/v1/auth/device/approve
+POST /api/v1/auth/device/token
 ```
 
 Every mutation carries an expected entity version and idempotency key. Server
 responses identify the actor and resulting Workspace change sequence.
 
-The current LightFlux server does not expose these routes. They must be
-implemented in the main repository before Workspace selection and task
-commands can be enabled.
+The server applies task, subtask, rich-text, and Milestone mutations to the
+owner-scoped V12 aggregate under a transaction lock. Idempotency records and
+expected entity versions prevent blind retries and stale writes.
 
 ## Authentication
 
-The published CLI will use an OAuth-style device authorization flow. Tokens
-must be stored in an operating-system credential store. The initial scaffold
-accepts `LIGHTFLUX_TOKEN` strictly for development and never persists it.
+The CLI uses a device authorization flow. It displays a short code which the
+signed-in user approves in LightFlux Desktop Settings. The resulting token is
+stored separately from context in an owner-readable credential file.
+`LIGHTFLUX_TOKEN` can override it for development and CI.
 
-Agents use Workspace service accounts with project-scoped permissions:
+CLI device tokens currently receive these Workspace scopes:
 
 ```text
 projects:read
 tasks:read
 tasks:write
 tasks:complete
+milestones:read
+milestones:write
 comments:write
 ```
 
@@ -82,9 +93,9 @@ The Skill describes when and how an Agent should use LightFlux. It does not:
 - duplicate conflict or authorization logic;
 - mutate task files directly.
 
-All deterministic behavior remains in the CLI. The same canonical Skill is
-installed once beneath `~/.agents/skills` and linked into supported Agent
-directories.
+All deterministic behavior remains in the CLI. The canonical Skill is
+distributed from the public repository through the open Skills CLI. LightFlux
+does not manage Agent-specific installation paths or links itself.
 
 ## Release Model
 
@@ -92,8 +103,10 @@ directories.
 - Package directory: `cli/`
 - npm package: `lightflux`
 - executable: `lightflux`
+- Skill installer:
+  `npx skills@latest add little1d/LightFlux --skill lightflux`
 - package version: independent from the LightFlux application version
-- first functional Workspace release: aligned with LightFlux 0.1.1
+- first functional Workspace CLI package: `0.1.0`
 
 The package name was unclaimed in the npm registry when the repository was
 initialized. Availability must be checked again immediately before publish.

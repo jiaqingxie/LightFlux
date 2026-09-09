@@ -18,16 +18,20 @@ subdirectory overrides it for that subtree.
 
 ## Repository Map
 
-- `lightflux/`: Expo and React Native application for Web, iOS, and Android.
+- `lightflux/`: Expo Web interface shared with the Tauri desktop application.
 - `lightflux/src-tauri/`: Tauri desktop shell and Rust integrations.
 - `lightflux/editor-web/`: Tiptap editor bundle embedded by native clients.
 - `server/`: Node.js authentication, sync, upload, and AI proxy service.
-- `cli/`: public CLI package and bundled Agent Skill.
+- `cli/`: public CLI package.
+- `skills/lightflux/`: canonical public Agent Skill.
 
 ## Product And Architecture Invariants
 
 - Keep the product local-first. UI mutations update local state immediately,
   while persistence and sync remain behind service boundaries.
+- Authenticated desktop sessions reconcile external Workspace revisions on
+  focus and a short visible-window interval. Applying an unchanged remote
+  state must not write it back or advance the server revision.
 - Historical statistics come from `TaskEvent`; do not infer history from a
   current snapshot. Trash and archived data must not pollute active metrics.
 - Persisted schema changes require forward migration, normalization, and tests
@@ -43,6 +47,14 @@ subdirectory overrides it for that subtree.
 - Application source, CLI source, and desktop release assets live in the
   `little1d/LightFlux` repository. Desktop updater URLs and release automation
   must not target retired auxiliary repositories.
+- Desktop and CLI are the maintained product surfaces. Keep Expo Web as the
+  Tauri frontend foundation; iOS, Android, and WeChat are frozen and must not
+  receive new release or integration work.
+- CLI device authorization opens the registered `lightflux://` desktop deep
+  link with a prefilled code; do not route this flow through the public Web
+  surface.
+- Distribute the Agent Skill with the open `skills` CLI. The LightFlux CLI
+  must not own Agent-specific Skill paths, links, updates, or removal.
 - Global search uses `Command/Ctrl + F` and suppresses the browser default.
   Do not reintroduce a persistent search navigation item.
 - Today and Projects are active-task surfaces: completed and trashed tasks must
@@ -67,9 +79,9 @@ subdirectory overrides it for that subtree.
   layout states when they apply.
 - Prefer direct inline editing, keyboard support, visible focus rings, concise
   tooltips, immediate feedback, and short transitions over modal-heavy flows.
-- Validate Web, mobile, and desktop behavior when shared UI or interaction code
-  changes. A screenshot is evidence of intent, not permission to copy another
-  product's branding blindly.
+- Validate the Expo Web build and Tauri desktop behavior when shared UI or
+  interaction code changes. A screenshot is evidence of intent, not
+  permission to copy another product's branding blindly.
 
 ## Verification Baseline
 
@@ -108,12 +120,10 @@ cargo check --manifest-path lightflux/src-tauri/Cargo.toml
   bottom sheet. Composite rows must not nest interactive HTML buttons.
 - Custom pointer drags attach window listeners synchronously and build previews
   from the visible row so nested geometry and fast gestures remain correct.
-- Mobile layouts follow the visual viewport, use explicit keyboard avoidance,
-  keep shell utilities available across primary routes, and share one fixed
-  quick-add anchor.
-- Native authentication must restore its stored session and complete
-  owner-scoped cloud reconciliation before showing task data. Local mode is
-  always an explicit user choice.
+- Tauri authentication must not depend on cross-site WebView cookies. Persist
+  the server-issued session token securely, restore it through the authenticated
+  backend session endpoint, and complete owner-scoped cloud reconciliation
+  before showing task data. Local mode is always an explicit user choice.
 - Production Expo origins are build inputs: validate every
   `EXPO_PUBLIC_*_API_URL` before export and clear Metro's cache for production
   builds.

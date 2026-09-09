@@ -4,6 +4,14 @@ mod desktop;
 
 fn main() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .setup(desktop::setup)
@@ -11,7 +19,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             desktop::apply_desktop_preferences,
             desktop::desktop_environment,
+            desktop::export_app_state_backup,
+            desktop::load_desktop_auth_token,
             desktop::quit_desktop,
+            desktop::store_desktop_auth_token,
             desktop::update_desktop_status,
         ]);
 

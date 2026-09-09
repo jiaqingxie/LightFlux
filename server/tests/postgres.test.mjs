@@ -135,7 +135,7 @@ test('re-running migrations is idempotent', async () => {
   const applied = await pool.query(
     'SELECT id, name, checksum FROM lightflux_schema_migrations',
   );
-  assert.equal(applied.rowCount, 4);
+  assert.equal(applied.rowCount, 5);
   for (const migration of applied.rows) {
     assert.match(migration.checksum, /^[0-9a-f]{64}$/);
   }
@@ -166,6 +166,110 @@ test('stores hashed sessions and ignores expired sessions', async () => {
     await repository.findSessionByTokenHash('b'.repeat(64)),
     null,
   );
+});
+
+test('restores and deletes active Better Auth sessions by raw token', async () => {
+  const authUserId = randomUUID();
+  const activeSessionId = randomUUID();
+  const expiredSessionId = randomUUID();
+  const now = new Date();
+  await pool.query(
+    `INSERT INTO email_auth_users (
+       id, name, email, email_verified, image, created_at, updated_at
+     ) VALUES ($1, $2, $3, true, $4, $5, $5)`,
+    [
+      authUserId,
+      'Desktop user',
+      'desktop@example.com',
+      'https://example.com/avatar.png',
+      now,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO email_auth_sessions (
+       id, auth_user_id, token, expires_at, created_at, updated_at
+     ) VALUES
+       ($1, $2, $3, $4, $6, $6),
+       ($5, $2, $7, $8, $6, $6)`,
+    [
+      activeSessionId,
+      authUserId,
+      'active-desktop-token',
+      new Date(now.getTime() + 60_000),
+      expiredSessionId,
+      now,
+      'expired-desktop-token',
+      new Date(now.getTime() - 60_000),
+    ],
+  );
+
+  assert.deepEqual(
+    await repository.findEmailSessionByToken('active-desktop-token'),
+    {
+      session: {
+        id: activeSessionId,
+        userId: authUserId,
+        expiresAt: new Date(now.getTime() + 60_000),
+      },
+      user: {
+        id: authUserId,
+        email: 'desktop@example.com',
+        name: 'Desktop user',
+        image: 'https://example.com/avatar.png',
+      },
+    },
+  );
+  assert.equal(
+    await repository.findEmailSessionByToken('expired-desktop-token'),
+    null,
+  );
+
+  await repository.deleteEmailSession(activeSessionId);
+  assert.equal(
+    await repository.findEmailSessionByToken('active-desktop-token'),
+    null,
+  );
+});
+
+test('approves one-time device codes and revokes issued API tokens', async () => {
+  const user = await repository.upsertFederatedUser({
+    provider: 'better-auth-email',
+    subject: 'device-auth-user',
+    email: 'device@example.com',
+    displayName: 'Device user',
+    avatarUrl: null,
+  });
+  const deviceCodeHash = 'd'.repeat(64);
+  await repository.createDeviceAuthorization({
+    deviceCodeHash,
+    userCode: 'ABCD-2345',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+  assert.equal(
+    await repository.approveDeviceAuthorization({
+      userCode: 'ABCD-2345',
+      userId: user.id,
+    }),
+    true,
+  );
+
+  const tokenHash = 'e'.repeat(64);
+  const consumed = await repository.consumeDeviceAuthorization({
+    deviceCodeHash,
+    tokenHash,
+    tokenId: randomUUID(),
+    scopes: ['tasks:read'],
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+  assert.equal(consumed.status, 'approved');
+  assert.deepEqual(
+    (await repository.findApiTokenByHash(tokenHash))?.scopes,
+    ['tasks:read'],
+  );
+  assert.equal(await repository.revokeApiToken(tokenHash), true);
+  assert.equal(await repository.findApiTokenByHash(tokenHash), null);
 });
 
 test('uses revision CAS and returns the current snapshot on conflict', async () => {
@@ -211,6 +315,110 @@ test('uses revision CAS and returns the current snapshot on conflict', async () 
     revision: 1,
     state: currentState,
   });
+});
+
+test('records and safely undoes the latest Workspace mutation', async () => {
+  const user = await repository.upsertFederatedUser({
+    provider: 'better-auth-email',
+    subject: 'mutation-user',
+    email: 'mutation@example.com',
+    displayName: 'Mutation user',
+    avatarUrl: null,
+  });
+  const initial = {
+    schemaVersion: 12,
+    updatedAt: 100,
+    todos: [{ id: 'task', title: 'Before', updatedAt: 100 }],
+    projects: [],
+  };
+  await repository.putAppState(user.id, initial, 0);
+  const mutation = await repository.mutateAppState({
+    action: 'task.update',
+    actorId: 'test-token',
+    entityId: 'task',
+    idempotencyKey: 'update-task',
+    requestHash: 'f'.repeat(64),
+    userId: user.id,
+    mutate: (state) => {
+      state.todos[0].title = 'After';
+      state.todos[0].updatedAt = 200;
+      state.updatedAt = 200;
+      return state;
+    },
+  });
+  assert.equal(mutation.revision, 2);
+  const replay = await repository.mutateAppState({
+    action: 'task.update',
+    actorId: 'test-token',
+    entityId: 'task',
+    idempotencyKey: 'update-task',
+    requestHash: 'f'.repeat(64),
+    userId: user.id,
+    mutate: () => {
+      throw new Error('Replay must not execute the mutation again.');
+    },
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.entity.title, 'After');
+  assert.equal(
+    (await repository.listWorkspaceMutations({ userId: user.id }))[0]
+      .action,
+    'task.update',
+  );
+
+  const undone = await repository.undoWorkspaceMutation({
+    mutationId: mutation.mutationId,
+    userId: user.id,
+  });
+  assert.equal(undone.revision, 3);
+  assert.equal(undone.state.todos[0].title, 'Before');
+  await assert.rejects(
+    repository.undoWorkspaceMutation({
+      mutationId: mutation.mutationId,
+      userId: user.id,
+    }),
+    /already undone/,
+  );
+});
+
+test('records milestone entities in Workspace mutations', async () => {
+  const user = await repository.upsertFederatedUser({
+    provider: 'better-auth-email',
+    subject: 'milestone-mutation-user',
+    email: 'milestone-mutation@example.com',
+    displayName: 'Milestone mutation user',
+    avatarUrl: null,
+  });
+  await repository.putAppState(
+    user.id,
+    {
+      schemaVersion: 12,
+      updatedAt: 100,
+      todos: [],
+      projects: [],
+      milestones: [{ id: 'launch', title: 'Before', revision: 1 }],
+    },
+    0,
+  );
+
+  const mutation = await repository.mutateAppState({
+    action: 'milestone.update',
+    actorId: 'test-token',
+    entityKind: 'milestone',
+    entityId: 'launch',
+    idempotencyKey: 'update-milestone',
+    requestHash: 'a'.repeat(64),
+    userId: user.id,
+    mutate: (state) => {
+      state.milestones[0].title = 'After';
+      state.milestones[0].revision = 2;
+      state.updatedAt = 200;
+      return state;
+    },
+  });
+
+  assert.equal(mutation.entity.title, 'After');
+  assert.equal(mutation.entity.revision, 2);
 });
 
 test('keeps updatedAt protection for clients without baseRevision', async () => {

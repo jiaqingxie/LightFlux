@@ -26,6 +26,10 @@ import {
 import { postgresConfigFromEnvironment } from './postgres/config.mjs';
 import { createPostgresPool } from './postgres/pool.mjs';
 import { createPostgresRepository } from './postgres/repository.mjs';
+import {
+  createWorkspaceService,
+  WORKSPACE_API_SCOPES,
+} from './workspace.mjs';
 
 const environmentList = (value) =>
   String(value ?? '')
@@ -95,6 +99,10 @@ const pool = createPostgresPool(postgresConfigFromEnvironment());
 const database = createPostgresRepository({
   pool,
 });
+const workspaceService = createWorkspaceService({
+  appWebUrl: config.appWebUrl,
+  repository: database,
+});
 const otpEmailSender = createOtpEmailSender(
   otpEmailConfigFromEnvironment(),
 );
@@ -154,7 +162,14 @@ const readBody = async (request, maxBytes) => {
 
 const parseBody = async (request) => {
   const body = await readBody(request, 2 * 1024 * 1024);
-  return body.length > 0 ? JSON.parse(body.toString('utf8')) : {};
+  if (body.length === 0) return {};
+  try {
+    return JSON.parse(body.toString('utf8'));
+  } catch {
+    const error = new Error('Request body must be valid JSON.');
+    error.status = 400;
+    throw error;
+  }
 };
 
 const IMAGE_TYPES = {
@@ -358,27 +373,50 @@ const requestToken = (request) => {
   return parseCookies(request)[COOKIE_NAME] ?? null;
 };
 
+const mapEmailSession = async (emailSession) => {
+  if (!emailSession?.user?.id) {
+    return null;
+  }
+  const user = await database.upsertFederatedUser({
+    provider: EMAIL_AUTH_PROVIDER,
+    subject: emailSession.user.id,
+    email: emailSession.user.email,
+    displayName: emailSession.user.name,
+    avatarUrl: emailSession.user.image,
+  });
+  return {
+    email: emailSession.user.email,
+    provider: EMAIL_AUTH_PROVIDER,
+    scopes: WORKSPACE_API_SCOPES,
+    session: emailSession.session,
+    user,
+  };
+};
+
 const currentSession = async (request) => {
   const emailSession = await emailAuth.api.getSession({
     headers: fromNodeHeaders(request.headers),
   });
-  if (emailSession?.user?.id) {
-    const user = await database.upsertFederatedUser({
-      provider: EMAIL_AUTH_PROVIDER,
-      subject: emailSession.user.id,
-      email: emailSession.user.email,
-      displayName: emailSession.user.name,
-      avatarUrl: emailSession.user.image,
-    });
-    return {
-      provider: EMAIL_AUTH_PROVIDER,
-      session: emailSession.session,
-      user,
-    };
+  const mappedEmailSession = await mapEmailSession(emailSession);
+  if (mappedEmailSession) {
+    return mappedEmailSession;
   }
 
   const token = requestToken(request);
   if (!token) return null;
+  if (String(request.headers.authorization ?? '').startsWith('Bearer ')) {
+    const bearerEmailSession =
+      await database.findEmailSessionByToken(token);
+    const mappedBearerSession =
+      await mapEmailSession(bearerEmailSession);
+    if (mappedBearerSession) {
+      return mappedBearerSession;
+    }
+  }
+  const apiSession = await workspaceService.authenticateToken(token);
+  if (apiSession) {
+    return apiSession;
+  }
   const legacySession = await database.findSessionByTokenHash(
     tokenHash(token),
   );
@@ -422,7 +460,8 @@ const handleRequest = async (request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
       ...corsHeaders,
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers':
+        'Authorization, Content-Type, Idempotency-Key',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     });
     response.end();
@@ -437,6 +476,358 @@ const handleRequest = async (request, response) => {
       response.setHeader(name, value);
     }
     await emailAuthHandler(request, response);
+    return;
+  }
+
+  if (
+    url.pathname === '/api/v1/auth/device' &&
+    request.method === 'POST'
+  ) {
+    json(
+      response,
+      201,
+      await workspaceService.requestDeviceAuthorization(),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (
+    url.pathname === '/api/v1/auth/device/token' &&
+    request.method === 'POST'
+  ) {
+    const body = await parseBody(request);
+    json(
+      response,
+      200,
+      await workspaceService.exchangeDeviceAuthorization({
+        deviceCode: body.deviceCode,
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (
+    url.pathname === '/api/v1/auth/device/approve' &&
+    request.method === 'POST'
+  ) {
+    const auth = await currentSession(request);
+    if (!auth || auth.provider !== EMAIL_AUTH_PROVIDER) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      200,
+      await workspaceService.approveDeviceAuthorization({
+        auth,
+        userCode: body.userCode,
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (
+    url.pathname === '/api/v1/auth/logout' &&
+    request.method === 'POST'
+  ) {
+    const token = requestToken(request);
+    if (!token) {
+      json(response, 200, { ok: false }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.revokeToken(token),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (url.pathname === '/api/v1/workspaces' && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.listWorkspaces(auth),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const workspaceProjectsMatch = url.pathname.match(
+    /^\/api\/v1\/workspaces\/([^/]+)\/projects$/,
+  );
+  if (workspaceProjectsMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.listProjects({
+        auth,
+        workspaceId: decodeURIComponent(workspaceProjectsMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const workspaceMilestonesMatch = url.pathname.match(
+    /^\/api\/v1\/workspaces\/([^/]+)\/milestones$/,
+  );
+  if (workspaceMilestonesMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.listMilestones({
+        auth,
+        includeArchived: url.searchParams.get('archived') === 'true',
+        includeTrash: url.searchParams.get('trash') === 'true',
+        workspaceId: decodeURIComponent(workspaceMilestonesMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (workspaceMilestonesMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      201,
+      await workspaceService.mutateMilestone({
+        action: 'milestone.create',
+        auth,
+        body,
+        idempotencyKey: request.headers['idempotency-key'],
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const workspaceAuditMatch = url.pathname.match(
+    /^\/api\/v1\/workspaces\/([^/]+)\/audit$/,
+  );
+  if (workspaceAuditMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.listAudit({
+        auth,
+        workspaceId: decodeURIComponent(workspaceAuditMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const projectTasksMatch = url.pathname.match(
+    /^\/api\/v1\/projects\/([^/]+)\/tasks$/,
+  );
+  if (projectTasksMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.listTasks({
+        auth,
+        projectId: decodeURIComponent(projectTasksMatch[1]),
+        includeCompleted: url.searchParams.get('completed') === 'true',
+        includeTrash: url.searchParams.get('trash') === 'true',
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  if (projectTasksMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      201,
+      await workspaceService.mutateTask({
+        action: 'task.create',
+        auth,
+        body: {
+          ...body,
+          projectId: decodeURIComponent(projectTasksMatch[1]),
+        },
+        idempotencyKey: request.headers['idempotency-key'],
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const taskMatch = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)$/);
+  if (taskMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.showTask({
+        auth,
+        taskId: decodeURIComponent(taskMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const taskMutationMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/mutations$/,
+  );
+  if (taskMutationMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      200,
+      await workspaceService.mutateTask({
+        action: body.action,
+        auth,
+        body,
+        idempotencyKey: request.headers['idempotency-key'],
+        taskId: decodeURIComponent(taskMutationMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const taskCommentsMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/comments$/,
+  );
+  if (taskCommentsMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      201,
+      await workspaceService.addTaskComment({
+        auth,
+        body,
+        idempotencyKey: request.headers['idempotency-key'],
+        taskId: decodeURIComponent(taskCommentsMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const milestoneMatch = url.pathname.match(
+    /^\/api\/v1\/milestones\/([^/]+)$/,
+  );
+  if (milestoneMatch && request.method === 'GET') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.showMilestone({
+        auth,
+        milestoneId: decodeURIComponent(milestoneMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const milestoneMutationMatch = url.pathname.match(
+    /^\/api\/v1\/milestones\/([^/]+)\/mutations$/,
+  );
+  if (milestoneMutationMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    const body = await parseBody(request);
+    json(
+      response,
+      200,
+      await workspaceService.mutateMilestone({
+        action: body.action,
+        auth,
+        body,
+        idempotencyKey: request.headers['idempotency-key'],
+        milestoneId: decodeURIComponent(milestoneMutationMatch[1]),
+      }),
+      corsHeaders,
+    );
+    return;
+  }
+
+  const mutationUndoMatch = url.pathname.match(
+    /^\/api\/v1\/mutations\/([^/]+)\/undo$/,
+  );
+  if (mutationUndoMatch && request.method === 'POST') {
+    const auth = await currentSession(request);
+    if (!auth) {
+      json(response, 401, { error: 'Authentication required.' }, corsHeaders);
+      return;
+    }
+    json(
+      response,
+      200,
+      await workspaceService.undoMutation({
+        auth,
+        mutationId: decodeURIComponent(mutationUndoMatch[1]),
+      }),
+      corsHeaders,
+    );
     return;
   }
 
@@ -611,7 +1002,13 @@ const handleRequest = async (request, response) => {
       response,
       auth ? 200 : 401,
       auth
-        ? { authenticated: true, user: publicUser(auth.user) }
+        ? {
+            authenticated: true,
+            user: {
+              ...publicUser(auth.user),
+              ...(auth.email ? { email: auth.email } : {}),
+            },
+          }
         : { authenticated: false },
       corsHeaders,
     );
@@ -622,6 +1019,8 @@ const handleRequest = async (request, response) => {
     const auth = await currentSession(request);
     if (auth?.provider === 'wechat') {
       await database.deleteSession(auth.session.id);
+    } else if (auth?.provider === EMAIL_AUTH_PROVIDER) {
+      await database.deleteEmailSession(auth.session.id);
     }
     json(response, 200, { ok: true }, {
       ...corsHeaders,
@@ -818,7 +1217,16 @@ const server = createServer((request, response) => {
     json(
       response,
       status,
-      { error: publicError.message },
+      {
+        error: publicError.message,
+        ...(status < 500 && typeof error?.code === 'string'
+          ? { code: error.code }
+          : {}),
+        ...(error?.currentTask ? { currentTask: error.currentTask } : {}),
+        ...(error?.currentMilestone
+          ? { currentMilestone: error.currentMilestone }
+          : {}),
+      },
       corsHeadersForRequest(request),
     );
   });

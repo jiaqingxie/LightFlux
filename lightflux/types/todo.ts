@@ -205,6 +205,7 @@ export type TodoUpdate = Partial<
     | 'title'
     | 'scheduledDate'
     | 'projectId'
+    | 'milestoneId'
     | 'parentId'
     | 'priority'
     | 'sortOrder'

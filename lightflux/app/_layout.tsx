@@ -75,7 +75,9 @@ import {
 } from '../components/appShellContext';
 import { useCurrentDateKey } from '../hooks/useCurrentDateKey';
 import {
+  listenForDesktopDeepLinks,
   listenForTrayActions,
+  parseCliAuthorizationDeepLink,
   quitDesktop,
 } from '../services/desktopRuntime';
 import { useDesktopStore } from '../store/desktopStore';
@@ -112,6 +114,7 @@ const DESKTOP_NAV_WIDTH = 78;
 const DIVIDER_WIDTH = 8;
 const MIN_LIST_WIDTH = 360;
 const MIN_DETAILS_WIDTH = 360;
+const REMOTE_RECONCILE_INTERVAL_MS = 15_000;
 
 const NAV_ICONS: Record<
   NavigationView,
@@ -281,6 +284,7 @@ const AppShell = () => {
   );
   const [updateMenuOpen, setUpdateMenuOpen] = useState(false);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
+  const [cliDeviceCode, setCliDeviceCode] = useState<string | null>(null);
   const { height, width } = useWindowDimensions();
   const settingsSlideAnim = useRef(new Animated.Value(-width)).current;
   const [navigationDrag, setNavigationDrag] =
@@ -454,6 +458,20 @@ const AppShell = () => {
     },
     [router, usesDesktopLayout],
   );
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listenForDesktopDeepLinks((url) => {
+      const code = parseCliAuthorizationDeepLink(url);
+      if (!code) {
+        return;
+      }
+      setCliDeviceCode(code);
+      changeView('settings');
+    }).then((listener) => {
+      unlisten = listener;
+    });
+    return () => unlisten?.();
+  }, [changeView]);
   const openSearchTask = useCallback(
     (id: string) => {
       const todo = useTodoStore
@@ -665,6 +683,59 @@ const AppShell = () => {
 
   useEffect(() => {
     if (
+      Platform.OS !== 'web' ||
+      sessionState !== 'authenticated' ||
+      isMarketingRoute
+    ) {
+      return undefined;
+    }
+    let active = true;
+    let syncing = false;
+    const reconcile = () => {
+      if (
+        !active ||
+        syncing ||
+        document.visibilityState === 'hidden'
+      ) {
+        return;
+      }
+      syncing = true;
+      void syncRemote()
+        .catch((error) => {
+          console.warn('Unable to refresh cloud changes.', error);
+        })
+        .finally(() => {
+          syncing = false;
+        });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        reconcile();
+      }
+    };
+    const interval = window.setInterval(
+      reconcile,
+      REMOTE_RECONCILE_INTERVAL_MS,
+    );
+    window.addEventListener('focus', reconcile);
+    document.addEventListener(
+      'visibilitychange',
+      handleVisibilityChange,
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', reconcile);
+      document.removeEventListener(
+        'visibilitychange',
+        handleVisibilityChange,
+      );
+    };
+  }, [isMarketingRoute, sessionState, syncRemote]);
+
+  useEffect(() => {
+    if (
       sessionState === 'signed-out' &&
       !isLoginRoute &&
       !isMarketingRoute
@@ -782,7 +853,7 @@ const AppShell = () => {
     const user = await getRemoteUser();
     setCurrentUser(user);
     setSessionState('authenticated');
-    router.replace('/today');
+    router.replace(cliDeviceCode ? '/settings' : '/today');
     await saveSessionState('authenticated');
   };
 
@@ -803,6 +874,8 @@ const AppShell = () => {
       openCalendarAdd,
       notify,
       changeView,
+      cliDeviceCode,
+      clearCliDeviceCode: () => setCliDeviceCode(null),
       currentUser,
       updateCurrentUser: setCurrentUser,
       hiddenNavigationItems,
@@ -812,6 +885,7 @@ const AppShell = () => {
     }),
     [
       changeView,
+      cliDeviceCode,
       currentUser,
       hiddenNavigationItems,
       notify,
@@ -1127,9 +1201,11 @@ const AppShell = () => {
         >
           <SafeAreaView style={styles.settingsPanelSafeArea}>
             <SettingsScreen
+              cliDeviceCode={cliDeviceCode}
               currentUser={currentUser}
               hiddenNavigationItems={hiddenNavigationItems}
               onClose={() => setSettingsPanelOpen(false)}
+              onCliDeviceCodeAuthorized={() => setCliDeviceCode(null)}
               onNavigationVisibilityChange={setNavigationVisible}
               onOpenStatistics={() => {
                 setSettingsPanelOpen(false);

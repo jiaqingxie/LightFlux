@@ -5,8 +5,10 @@ export default function SettingsRoute() {
   const shell = useAppShell();
   return (
     <SettingsScreen
+      cliDeviceCode={shell.cliDeviceCode}
       currentUser={shell.currentUser}
       hiddenNavigationItems={shell.hiddenNavigationItems}
+      onCliDeviceCodeAuthorized={shell.clearCliDeviceCode}
       onNavigationVisibilityChange={shell.setNavigationVisible}
       onOpenStatistics={() => shell.changeView('statistics')}
       onProfileUpdated={shell.updateCurrentUser}

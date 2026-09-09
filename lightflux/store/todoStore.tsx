@@ -8,8 +8,12 @@ import {
 } from '../services/milestoneNotifications';
 import { mergeConcurrentAppStates } from '../services/appStateMerge';
 import {
+  createAppStateBackup,
   loadAppState,
+  parseAppStateBackup,
+  reloadRemoteAppState,
   saveAppState,
+  saveLocalAppState,
   synchronizeAppState,
 } from '../services/todoStorage';
 import {
@@ -798,6 +802,59 @@ export const flushAppState = async (): Promise<void> => {
     return;
   }
   await saveAppState(persistedState(state));
+};
+
+export const exportAppStateBackup = async (): Promise<string> => {
+  const store = useTodoStore.getState();
+  await store.hydrate();
+  const state = useTodoStore.getState();
+  if (!state.persistenceReady) {
+    throw new Error('Local data is not ready for backup.');
+  }
+  const persisted = persistedState(state);
+  return createAppStateBackup(persisted);
+};
+
+export const restoreAppStateBackup = async (
+  rawBackup: string,
+): Promise<void> => {
+  const imported = parseAppStateBackup(rawBackup);
+  if (!imported) {
+    throw new Error('The selected file is not a valid LightFlux backup.');
+  }
+  await saveLocalAppState(imported);
+  useTodoStore.setState({
+    ...persistedStoreSlice(imported),
+    isHydrated: true,
+    persistenceErrorAt: null,
+    persistenceReady: true,
+  });
+  try {
+    const synchronized = await saveAppState(imported);
+    useTodoStore.setState({
+      ...persistedStoreSlice(synchronized),
+      persistenceErrorAt: null,
+      persistenceReady: true,
+    });
+  } catch (error) {
+    useTodoStore.setState({
+      persistenceErrorAt: Date.now(),
+    });
+    console.warn(
+      'Backup restored locally but cloud synchronization failed.',
+      error,
+    );
+  }
+};
+
+export const reloadAppStateFromRemote = async (): Promise<void> => {
+  const state = await reloadRemoteAppState();
+  useTodoStore.setState({
+    ...persistedStoreSlice(state),
+    isHydrated: true,
+    persistenceErrorAt: null,
+    persistenceReady: true,
+  });
 };
 
 export const TodoProvider = ({ children }: { children: React.ReactNode }) => {

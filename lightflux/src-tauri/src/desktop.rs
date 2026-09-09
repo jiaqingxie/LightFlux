@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    sync::Mutex,
+};
 use tauri::{
     image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder},
@@ -9,6 +14,7 @@ use tauri::{
 
 const TRAY_ID: &str = "lightflux-menu-bar";
 const TRAY_ACTION_EVENT: &str = "lightflux://tray-action";
+const AUTH_TOKEN_FILE: &str = "auth-session";
 
 const TRAY_ICON: &[u8] = include_bytes!("../icons/tray-default/36x36.png");
 const TRAY_UPDATE_ICON: &[u8] = include_bytes!("../icons/tray-update/36x36.png");
@@ -415,4 +421,82 @@ pub fn update_desktop_status(
 #[tauri::command]
 pub fn quit_desktop(app: AppHandle) {
     app.exit(0);
+}
+
+fn auth_token_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join(AUTH_TOKEN_FILE))
+}
+
+#[tauri::command]
+pub fn load_desktop_auth_token(app: AppHandle) -> Result<Option<String>, String> {
+    let path = auth_token_path(&app)?;
+    match fs::read_to_string(path) {
+        Ok(token) if !token.trim().is_empty() => Ok(Some(token.trim().to_string())),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn store_desktop_auth_token(
+    app: AppHandle,
+    token: Option<String>,
+) -> Result<(), String> {
+    let path = auth_token_path(&app)?;
+    let Some(token) = token else {
+        return match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        };
+    };
+    if token.is_empty()
+        || token.len() > 2048
+        || !token
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
+    {
+        return Err("Invalid desktop authentication token.".into());
+    }
+
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|error| error.to_string())?;
+    file.write_all(token.as_bytes())
+        .map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn export_app_state_backup(
+    app: AppHandle,
+    content: String,
+    filename: String,
+) -> Result<String, String> {
+    if !filename.starts_with("lightflux-backup-")
+        || !filename.ends_with(".json")
+        || !filename
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
+    {
+        return Err("Invalid backup filename.".into());
+    }
+    let mut path = app
+        .path()
+        .download_dir()
+        .map_err(|error| error.to_string())?;
+    path.push(filename);
+    fs::write(&path, content).map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }

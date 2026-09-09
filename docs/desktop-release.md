@@ -8,7 +8,8 @@ publishes desktop applications:
 - Windows (`x86_64`, NSIS installer)
 - Linux (`x86_64`, AppImage and deb)
 
-iOS and Android packages are not included in this desktop workflow.
+iOS and Android are frozen platforms and are not included in release or
+verification workflows.
 
 ## Release A Version
 
@@ -101,6 +102,18 @@ For desktop development:
 cd lightflux
 npx tauri dev
 ```
+
+## Local Backup And Recovery
+
+Desktop Settings provides a versioned JSON backup for the complete V12 app
+state. Export writes a timestamped file to the operating system Downloads
+directory. Restore accepts a selected `.json` file, validates the backup
+envelope and current schema, and requires in-app confirmation before replacing
+tasks, Projects, milestones, and task history.
+
+Backups do not contain authentication credentials or desktop preferences.
+Keep independent copies before uninstalling the application or clearing its
+WebView data.
 
 To exercise updater checks in a local release build, expose the public key
 while compiling:

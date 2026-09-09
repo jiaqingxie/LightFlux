@@ -1,154 +1,124 @@
 # Deployment
 
-Production deployment assets for LightFlux. `lightflux.site` serves both the
-static Web app (exported Expo bundle) and the API from one nginx instance with a
-single TLS certificate. The API runs as a single Docker container. PostgreSQL is
-hosted on Supabase and email OTP is delivered through Resend SMTP, so no
-database or mail container runs on the server.
+LightFlux desktop and CLI need an HTTPS API for authentication and optional
+cloud sync. The core product does not require a public Web application.
 
-```
-deploy/
-├── compose.prod.yaml         # Production compose (API only; external Supabase)
-├── .env.production.example   # Environment template (no secrets)
-├── nginx/lightflux.conf      # Static Web app + API reverse proxy (certbot adds TLS)
-└── scripts/
-    ├── install-docker.sh     # Docker install with Tencent intranet mirror
-    ├── bootstrap.sh          # One-time server setup (docker + nginx + certbot)
-    ├── deploy.sh             # API deploy (sync → build → migrate → restart)
-    └── deploy-web.sh         # Web deploy (build export → sync to /opt/lightflux/web)
-```
+To avoid an ICP dependency, run the API on an overseas Linux host or another
+self-hosted location where the chosen domain can terminate HTTPS legally.
+LightFlux does not depend on a specific cloud vendor.
 
 ## Architecture
 
-```
-                          Client (browser / Tauri / Expo)
-                                    │  HTTPS
-                                    ▼
-                              nginx :443
-                        ┌───────────┴────────────┐
-              /  /_expo (static)          /api  /health (proxy)
-                        │                          │
-              /opt/lightflux/web           API container :8787 (127.0.0.1)
-              (exported Expo Web)                   │
-                                          Supabase PostgreSQL (pooler :5432)
-   Let's Encrypt auto-renew               Resend SMTP :465
+```text
+Desktop / CLI
+      |
+    HTTPS
+      |
+    nginx
+      |
+API container :8787
+      |
+PostgreSQL + SMTP + optional AI provider
 ```
 
-- The Web app is a same-origin SPA: it calls `https://lightflux.site/api`, so no
-  cross-origin CORS is involved for browser clients.
-- nginx serves `/opt/lightflux/web` for `/` (SPA history fallback to
-  `index.html`) and reverse-proxies `/api/` and `/health` to the container.
-- The API binds to `127.0.0.1:8787`; only nginx is exposed publicly.
-- `PUBLIC_BASE_URL` must be `https://…` so the Better Auth session cookie is
-  marked `Secure`.
-- The image `CMD` runs `npm run db:migrate` before `npm start`, so migrations
-  apply on every container start (idempotent, advisory-locked).
+The optional Expo Web export can be placed in `/opt/lightflux/web`; nginx
+serves it from the same origin. It is a convenience and download/docs surface,
+not a required product runtime.
 
-## Prerequisites
+## Host Requirements
 
-1. **DNS**: `lightflux.site` and `www.lightflux.site` A records point to the
-   server IP. The apex `@` record is required for the root domain.
-2. **Cloud security group**: inbound TCP `80` and `443` open to `0.0.0.0/0`
-   (configured in the Tencent Cloud console, not on the server).
+- Ubuntu/Debian or a RHEL-compatible Linux distribution
+- A domain whose A/AAAA record resolves to the host
+- Inbound TCP 80 and 443
+- Outbound access to PostgreSQL, SMTP, and configured AI services
+- `rsync` and SSH access for deployment
 
-## First-time setup
+Choose a host region outside mainland China when avoiding ICP is a requirement.
+DNS, hosting, and data-processing obligations remain the operator's
+responsibility.
 
-On the server, as root:
+## Bootstrap
+
+Copy `deploy/` to the host and run as root:
 
 ```bash
-# 1. Copy the deploy/ directory and server/ source to the server, e.g. via
-#    the deploy script below, or manually to /opt/lightflux.
-
-# 2. Bootstrap the host (installs docker, nginx, certbot; issues the cert).
-DOMAIN=lightflux.site CERT_EMAIL=you@example.com \
-  bash /opt/lightflux/deploy/scripts/bootstrap.sh
-
-# 3. Create the production env file from the template and fill in real values.
-cp /opt/lightflux/deploy/.env.production.example /opt/lightflux/server/.env
-chmod 600 /opt/lightflux/server/.env
-# edit /opt/lightflux/server/.env
+DOMAIN=api.example.com CERT_EMAIL=ops@example.com \
+  bash deploy/scripts/bootstrap.sh
 ```
 
-## Deploying the API (manual)
+The script installs Docker from Docker's official installer, installs nginx
+and certbot with the host package manager, renders
+`nginx/lightflux.conf.template`, and obtains a Let's Encrypt certificate.
 
-From a workstation with `rsync` + `ssh` access:
+Create the production environment:
 
 ```bash
-SSH_HOST=<server-ip> bash deploy/scripts/deploy.sh
+cp deploy/.env.production.example server/.env
+chmod 600 server/.env
 ```
 
-This syncs `server/` (excluding `.env`, `node_modules`, `data`) and
-`compose.prod.yaml`, rebuilds the image, runs migrations, and restarts the
-container. The server-side `.env` is never touched.
+Set `PUBLIC_BASE_URL` and `APP_WEB_URL` to the final HTTPS origin. Use a
+production PostgreSQL database and unique secrets. Do not commit `server/.env`.
 
-## Deploying the Web app (manual)
+## Deploy API
 
-The Web app is exported locally so the `EXPO_PUBLIC_*` values from
-`lightflux/.env` are baked into the bundle. Point that file at production
-(`EXPO_PUBLIC_AUTH_API_URL=https://lightflux.site`, and the AI/upload URLs to
-the same origin) before building, then:
+From a trusted workstation or CI runner:
 
 ```bash
-SSH_HOST=<server-ip> bash deploy/scripts/deploy-web.sh
+SSH_HOST=<host> SSH_USER=<user> bash deploy/scripts/deploy.sh
 ```
 
-This runs `npm run desktop:web`, syncs `lightflux/desktop-dist/` to
-`/opt/lightflux/web`, and reloads nginx. nginx serves the SPA from `/` and
-proxies `/api` and `/health` to the API container, so the browser app talks to
-the same origin.
+Optional variables:
 
-> The service files (`services/authConfig.ts`, `agentApi.ts`, `imageUpload.ts`)
-> read `process.env.EXPO_PUBLIC_*` directly. Expo only inlines the value for
-> direct member access, so do not reintroduce an intermediate `const env =
-> process.env` alias — the export would ship an empty origin and silently fall
-> back to local-only mode.
+```text
+SSH_PORT=22
+REMOTE_DIR=/opt/lightflux
+COMPOSE_PROJECT=lightflux
+SSH_OPTS=
+```
 
-## Deploying (CI/CD)
+The script preserves the server-side `.env`, rebuilds the API container, runs
+forward migrations through the image command, and waits for `/health`.
 
-Pushes to `main` that touch `server/**` or `deploy/**` trigger
-`.github/workflows/server-deploy.yml`, which runs the same `deploy.sh` over SSH.
-Pushes that touch `lightflux/**` (or the Web deploy assets) trigger
-`.github/workflows/web-deploy.yml`, which builds the export in CI and runs
-`deploy-web.sh` over SSH with `SKIP_BUILD=1`. Configure these repository
-secrets:
+## Optional Web Surface
 
-| Secret          | Purpose                                        |
-| --------------- | ---------------------------------------------- |
-| `DEPLOY_SSH_KEY`| Private SSH key authorized on the server       |
-| `DEPLOY_HOST`   | Server host or IP                              |
-| `DEPLOY_USER`   | SSH user (e.g. `root`)                          |
-
-The Web build inlines the API origin at build time, so the workflow reads the
-`EXPO_PUBLIC_*` values from repository **variables** (not secrets — the origin
-is public and shipped in the bundle) under the `production` environment:
-
-| Variable                     | Value                    |
-| ---------------------------- | ------------------------ |
-| `EXPO_PUBLIC_AUTH_API_URL`   | `https://lightflux.site` |
-| `EXPO_PUBLIC_UPLOAD_API_URL` | `https://lightflux.site` |
-| `EXPO_PUBLIC_AI_API_URL`     | `https://lightflux.site` |
-
-Add the matching public key to `~/.ssh/authorized_keys` on the server. Prefer a
-non-root deploy user with `docker` group membership in the long run.
-
-`server-ci.yml` runs `npm test` for the server on every PR and push that
-touches `server/**`. The manual `deploy-web.sh` remains available for local
-deploys (omit `SKIP_BUILD` so it builds from `lightflux/.env`).
-
-## Certificates
-
-certbot obtains and installs the Let's Encrypt certificate and enables
-`certbot-renew.timer` for automatic renewal. Verify with:
+Build-time `EXPO_PUBLIC_*` values must point to the production HTTPS API:
 
 ```bash
-certbot certificates
-systemctl list-timers certbot-renew.timer
+EXPO_PUBLIC_AUTH_API_URL=https://api.example.com
+EXPO_PUBLIC_UPLOAD_API_URL=https://api.example.com
+EXPO_PUBLIC_AI_API_URL=https://api.example.com
+SSH_HOST=<host> bash deploy/scripts/deploy-web.sh
+```
+
+The GitHub Web workflow is manual-only. Desktop releases and API delivery do
+not depend on publishing the Web surface.
+
+## GitHub Actions
+
+Configure the `production` environment:
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `DEPLOY_SSH_KEY` | secret | SSH private key |
+| `DEPLOY_HOST` | secret | Overseas or self-hosted host |
+| `DEPLOY_USER` | secret | Restricted deploy user |
+| `EXPO_PUBLIC_AUTH_API_URL` | variable | Optional Web build API origin |
+| `EXPO_PUBLIC_UPLOAD_API_URL` | variable | Optional Web build upload origin |
+| `EXPO_PUBLIC_AI_API_URL` | variable | Optional Web build AI origin |
+
+`server-deploy.yml` deploys API changes from `main`. `web-deploy.yml` is
+started manually only.
+
+## Verification
+
+Before switching DNS:
+
+```bash
+curl --fail https://api.example.com/health
+docker compose -p lightflux -f deploy/compose.prod.yaml ps
 certbot renew --dry-run
 ```
 
-## Email delivery note
-
-`lightflux.site` is verified in Resend. Production uses
-`SMTP_FROM=LightFlux <noreply@lightflux.site>` so OTP mail can reach any
-recipient. Do not replace it with Resend's `onboarding@resend.dev` test sender,
-which only delivers to the Resend account owner.
+Back up PostgreSQL and the upload volume independently. See
+`docs/backend-postgresql.md` for database backup and migration rules.

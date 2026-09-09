@@ -1,6 +1,10 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import {
+  getCurrent as getCurrentDeepLinks,
+  onOpenUrl,
+} from '@tauri-apps/plugin-deep-link';
 import { relaunch } from '@tauri-apps/plugin-process';
 import {
   check,
@@ -60,12 +64,66 @@ const FALLBACK_ENVIRONMENT: DesktopEnvironment = {
   updaterConfigured: false,
 };
 
-const isDesktopRuntime = (): boolean => {
+export const isDesktopRuntime = (): boolean => {
   try {
     return isTauri();
   } catch {
     return false;
   }
+};
+
+export const loadDesktopAuthToken = async (): Promise<string | null> => {
+  if (!isDesktopRuntime()) {
+    return null;
+  }
+  return invoke<string | null>('load_desktop_auth_token');
+};
+
+export const storeDesktopAuthToken = async (
+  token: string | null,
+): Promise<void> => {
+  if (!isDesktopRuntime()) {
+    return;
+  }
+  await invoke('store_desktop_auth_token', { token });
+};
+
+export const parseCliAuthorizationDeepLink = (
+  value: string,
+): string | null => {
+  try {
+    const url = new URL(value);
+    const code = url.searchParams.get('code')?.toUpperCase();
+    return url.protocol === 'lightflux:' &&
+      url.hostname === 'cli' &&
+      url.pathname === '/authorize' &&
+      code &&
+      /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code)
+      ? code
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+export const listenForDesktopDeepLinks = async (
+  listener: (url: string) => void,
+): Promise<UnlistenFn> => {
+  if (!isDesktopRuntime()) {
+    return () => undefined;
+  }
+  const seen = new Set<string>();
+  const emit = (urls: string[] | null) => {
+    for (const url of urls ?? []) {
+      if (!seen.has(url)) {
+        seen.add(url);
+        listener(url);
+      }
+    }
+  };
+  const unlisten = await onOpenUrl(emit);
+  emit(await getCurrentDeepLinks().catch(() => null));
+  return unlisten;
 };
 
 export const getDesktopEnvironment =
@@ -115,6 +173,44 @@ export const downloadDesktopUpdate = async (
 ): Promise<void> => update.downloadAndInstall(onEvent, { timeout: 120_000 });
 
 export const relaunchDesktop = async (): Promise<void> => relaunch();
+
+export const exportDesktopBackup = async (
+  content: string,
+): Promise<string> => {
+  if (!isDesktopRuntime()) {
+    throw new Error('Desktop backup export requires the desktop application.');
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return invoke<string>('export_app_state_backup', {
+    content,
+    filename: `lightflux-backup-${timestamp}.json`,
+  });
+};
+
+export const importDesktopBackup = async (): Promise<string | null> => {
+  if (!isDesktopRuntime()) {
+    throw new Error('Desktop backup import requires the desktop application.');
+  }
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.accept = 'application/json,.json';
+    input.type = 'file';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        reject(new Error('The selected backup is larger than 50 MB.'));
+        return;
+      }
+      file.text().then(resolve, reject);
+    });
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+};
 
 export const listenForTrayActions = async (
   listener: (action: string) => void,

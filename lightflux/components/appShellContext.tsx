@@ -25,6 +25,8 @@ export type AppView =
 export interface AppShellValue {
   selectedTaskId: string | null;
   quickCreateRequestId: number;
+  cliDeviceCode: string | null;
+  clearCliDeviceCode: () => void;
   openTaskMenu: OpenTaskMenu;
   openActiveTask: (id: string) => void;
   openTrashedTask: (id: string) => void;

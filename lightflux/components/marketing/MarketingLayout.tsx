@@ -23,6 +23,7 @@ const MARKETING_LINKS: Array<{
   { href: '/download', label: '下载' },
   { href: '/help', label: '帮助' },
 ];
+const CLI_URL = 'https://github.com/little1d/LightFlux/tree/main/cli';
 
 export const MARKETING_COLORS = {
   accent: '#6759E8',
@@ -235,14 +236,14 @@ const MarketingHeader = ({
               ))}
             </View>
             <MarketingLink
-              href="/login"
-              label="登录"
+              href={CLI_URL as Href}
+              label="CLI"
               variant="nav"
             />
             <MarketingLink
-              href="/today"
-              icon="arrow-forward"
-              label="打开应用"
+              href="/download"
+              icon="download-outline"
+              label="下载桌面版"
               variant="primary"
             />
           </View>
@@ -263,15 +264,15 @@ const MarketingHeader = ({
           ))}
           <View style={styles.mobileMenuActions}>
             <MarketingLink
-              href="/login"
-              label="登录"
+              href={CLI_URL as Href}
+              label="CLI"
               onPress={() => setMenuOpen(false)}
               variant="secondary"
             />
             <MarketingLink
-              href="/today"
-              icon="arrow-forward"
-              label="打开应用"
+              href="/download"
+              icon="download-outline"
+              label="下载桌面版"
               onPress={() => setMenuOpen(false)}
               variant="primary"
             />
@@ -347,7 +348,7 @@ const MarketingFooter = ({ compact }: { compact: boolean }) => (
         © 2026 LightFlux. Local-first by design.
       </Text>
       <Text style={styles.footerAvailability}>
-        Web · macOS · Windows
+        macOS · Windows · CLI
       </Text>
     </View>
   </View>

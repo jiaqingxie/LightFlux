@@ -1,0 +1,70 @@
+name: lightflux-dev
+
+services:
+  workspace:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    init: true
+    working_dir: /workspaces/LightFlux
+    environment:
+      AI_ALLOW_ANONYMOUS: "true"
+      AI_API_KEY: ""
+      AI_BASE_URL: ""
+      AI_MODEL: ""
+      APP_WEB_URL: http://localhost:8081
+      AUTH_IP_ADDRESS_HEADERS: ""
+      AUTH_TRUSTED_ORIGINS: http://localhost:8081,http://localhost:1420,exp://
+      AUTH_TRUSTED_PROXIES: ""
+      BETTER_AUTH_SECRET: local-development-better-auth-secret
+      CORS_ORIGIN: http://localhost:8081,http://localhost:1420,tauri://localhost,http://tauri.localhost
+      DATABASE_SSL: "false"
+      DATABASE_URL: postgresql://lightflux:lightflux@postgres:5432/lightflux
+      EXPO_PUBLIC_AI_API_URL: http://localhost:8787
+      EXPO_PUBLIC_AUTH_API_URL: http://localhost:8787
+      EXPO_PUBLIC_UPLOAD_API_URL: http://localhost:8787
+      NODE_ENV: development
+      OTP_DELIVERY: log
+      PORT: "8787"
+      PUBLIC_BASE_URL: http://localhost:8787
+      SESSION_SECRET: local-development-session-secret
+      SMTP_HOST: ""
+      SMTP_PASSWORD: ""
+      SMTP_USER: ""
+      UPLOAD_ALLOW_ANONYMOUS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:8081:8081"
+      - "${BIND_HOST:-127.0.0.1}:8787:8787"
+    volumes:
+      - .:/workspaces/LightFlux:cached
+      - lightflux-node-modules:/workspaces/LightFlux/lightflux/node_modules
+      - server-node-modules:/workspaces/LightFlux/server/node_modules
+      - cli-node-modules:/workspaces/LightFlux/cli/node_modules
+      - npm-cache:/home/node/.npm
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lightflux
+      POSTGRES_PASSWORD: lightflux
+      POSTGRES_USER: lightflux
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lightflux -d lightflux"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  cli-node-modules:
+  lightflux-node-modules:
+  npm-cache:
+  postgres-data:
+  server-node-modules:

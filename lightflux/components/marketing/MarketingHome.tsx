@@ -37,9 +37,9 @@ const PRINCIPLES = [
     title: '按需同步',
   },
   {
-    description: 'Web 与桌面共享同一套任务和编辑体验。',
-    icon: 'desktop-outline' as const,
-    title: '多端连续',
+    description: '桌面端负责规划确认，CLI 负责自动化与 Agent 接入。',
+    icon: 'terminal-outline' as const,
+    title: '桌面与 CLI',
   },
 ];
 
@@ -72,7 +72,7 @@ const FAQ = [
     question: '必须注册账户吗？',
   },
   {
-    answer: 'Web 数据优先保存在当前浏览器；桌面和移动端保存在设备本地。登录后才会同步到云端。',
+    answer: '桌面数据优先保存在当前设备；登录后才会同步到云端。',
     question: '任务会保存在哪里？',
   },
   {
@@ -80,7 +80,7 @@ const FAQ = [
     question: 'AI 会直接修改任务吗？',
   },
   {
-    answer: 'Web 版可直接使用；macOS 与 Windows 已提供公开桌面安装包，其他平台会在正式发布后开放。',
+    answer: 'macOS 与 Windows 是当前维护平台，Linux 为 best effort。iOS、Android 与微信平台已冻结。',
     question: '目前支持哪些平台？',
   },
 ];
@@ -199,15 +199,15 @@ const MarketingHome = () => {
             ]}
           >
             <MarketingLink
-              href="/today"
-              icon="arrow-forward"
-              label="打开 Web 版"
-              variant="primary"
-            />
-            <MarketingLink
               href="/download"
               icon="download-outline"
               label="下载桌面版"
+              variant="primary"
+            />
+            <MarketingLink
+              href="/features"
+              icon="arrow-forward"
+              label="了解功能"
               variant="secondary"
             />
           </View>
@@ -324,9 +324,9 @@ const MarketingHome = () => {
         <View style={styles.platformInner}>
           <MarketingSectionHeading
             align="center"
-            description="浏览器直接使用，也可以下载 macOS 与 Windows 桌面应用。Linux 与移动端将在发布准备完成后开放。"
-            eyebrow="跨平台"
-            title="在熟悉的设备上继续计划"
+            description="macOS 与 Windows 是当前维护平台，CLI 连接任务与 Agent 工作流。Linux 构建按可用资源提供。"
+            eyebrow="桌面平台"
+            title="把计划留在桌面工作流中"
           />
           <View
             style={[
@@ -338,6 +338,7 @@ const MarketingHome = () => {
               ['globe-outline', 'Web'],
               ['logo-apple', 'macOS'],
               ['logo-windows', 'Windows'],
+              ['terminal-outline', 'CLI'],
               ['logo-tux', 'Linux · 即将提供'],
             ].map(([icon, label]) => (
               <View key={label} style={styles.platform}>
@@ -382,7 +383,7 @@ const MarketingHome = () => {
       <View style={styles.finalCta}>
         <Text style={styles.finalCtaTitle}>今天的计划，现在就可以开始</Text>
         <Text style={styles.finalCtaDescription}>
-          无需注册即可本地使用；需要跨设备时，再登录同步。
+          下载桌面端即可本地使用；需要 Agent 自动化时，再连接 CLI。
         </Text>
         <View
           style={[
@@ -391,9 +392,9 @@ const MarketingHome = () => {
           ]}
         >
           <MarketingLink
-            href="/today"
-            icon="arrow-forward"
-            label="打开 Web 版"
+            href="/download"
+            icon="download-outline"
+            label="下载桌面版"
             variant="primary"
           />
           <MarketingLink

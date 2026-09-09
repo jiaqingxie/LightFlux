@@ -31,8 +31,10 @@ import sharedStyles from './settings/styles';
 import IconButton from './ui/IconButton';
 
 const SettingsScreen = ({
+  cliDeviceCode,
   currentUser,
   hiddenNavigationItems,
+  onCliDeviceCodeAuthorized,
   onNavigationVisibilityChange,
   onClose,
   onOpenStatistics,
@@ -40,8 +42,10 @@ const SettingsScreen = ({
   onSignIn,
   onSignOut,
 }: {
+  cliDeviceCode?: string | null;
   currentUser: RemoteUser | null;
   hiddenNavigationItems: OptionalNavigationItemId[];
+  onCliDeviceCodeAuthorized?: () => void;
   onNavigationVisibilityChange: (
     id: OptionalNavigationItemId,
     visible: boolean,
@@ -361,8 +365,11 @@ const SettingsScreen = ({
           </View>
 
           <DesktopSettingsSections
+            authenticated={Boolean(currentUser)}
+            initialDeviceCode={cliDeviceCode}
             controlWidth={controlWidth}
             language={language}
+            onDeviceCodeAuthorized={onCliDeviceCodeAuthorized}
             stacked={stacked}
           />
         </ScrollView>
