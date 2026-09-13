@@ -32,7 +32,7 @@ jobs:
           cache-dependency-path: lightflux/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm --prefix ../shared ci && npm ci
 
       - name: Run TypeScript checks
         run: npm run typecheck
@@ -100,7 +100,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: lightflux
-        run: npm ci
+        run: npm --prefix ../shared ci && npm ci
 
       - name: Build and publish desktop bundle
         uses: tauri-apps/tauri-action@v1

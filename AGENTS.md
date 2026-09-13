@@ -21,27 +21,29 @@ subdirectory overrides it for that subtree.
 - `lightflux/`: Expo Web interface shared with the Tauri desktop application.
 - `lightflux/src-tauri/`: Tauri desktop shell and Rust integrations.
 - `lightflux/editor-web/`: Tiptap editor bundle embedded by native clients.
-- `server/`: Node.js authentication, sync, upload, and AI proxy service.
+- `shared/`: environment-independent task and Milestone mutation rules.
+- `server/`: archived cloud service, retained for data recovery.
 - `cli/`: public CLI package.
 - `skills/lightflux/`: canonical public Agent Skill.
 
 ## Product And Architecture Invariants
 
-- Keep the product local-first. UI mutations update local state immediately,
-  while persistence and sync remain behind service boundaries.
-- Authenticated desktop sessions reconcile external Workspace revisions on
-  focus and a short visible-window interval. Applying an unchanged remote
-  state must not write it back or advance the server revision.
+- Keep the product local-only. Desktop startup and task workflows must not
+  require accounts, network access, or a hosted server. Expo Web is the desktop
+  frontend and local preview, not a separately deployed product.
+- CLI mutations use the running desktop's loopback API and shared store.
+  Never write task files from the CLI. Acknowledge writes only after durable
+  persistence; retain entity versions, idempotency, audit and latest-only undo.
 - Historical statistics come from `TaskEvent`; do not infer history from a
   current snapshot. Trash and archived data must not pollute active metrics.
 - Persisted schema changes require forward migration, normalization, and tests
   for older data. Never silently discard user data.
 - AI data mutations follow understand, disambiguate, preview, confirm, execute,
   audit, and undo semantics. The model must not mutate local data directly.
-- Persistent server identity, session, and cloud app-state data use PostgreSQL
-  migrations. Keep client-owned state as a versioned JSONB aggregate, use
-  server revision compare-and-swap for writes, and keep upload bytes outside
-  the database.
+- Desktop data uses atomic local file replacement and pre-change backups.
+  Preserve legacy WebView data during migration; stop writes on corrupt or
+  unsupported state. Do not delete cloud data or retire servers without a
+  separately verified export and explicit approval.
 - Shared business rules belong in domain/store/service code. Put platform
   differences at `.web`, `.native`, Expo, or Tauri boundaries.
 - Application source, CLI source, and desktop release assets live in the
@@ -50,9 +52,9 @@ subdirectory overrides it for that subtree.
 - Desktop and CLI are the maintained product surfaces. Keep Expo Web as the
   Tauri frontend foundation; iOS, Android, and WeChat are frozen and must not
   receive new release or integration work.
-- CLI device authorization opens the registered `lightflux://` desktop deep
-  link with a prefilled code; do not route this flow through the public Web
-  surface.
+- CLI discovers an owner-only, per-launch desktop connection descriptor.
+  Bind only to 127.0.0.1 and reject browser Origin and unexpected Host headers.
+  Do not restore cloud device authorization or accept remote API overrides.
 - Distribute the Agent Skill with the open `skills` CLI. The LightFlux CLI
   must not own Agent-specific Skill paths, links, updates, or removal.
 - Global search uses `Command/Ctrl + F` and suppresses the browser default.
@@ -120,10 +122,7 @@ cargo check --manifest-path lightflux/src-tauri/Cargo.toml
   bottom sheet. Composite rows must not nest interactive HTML buttons.
 - Custom pointer drags attach window listeners synchronously and build previews
   from the visible row so nested geometry and fast gestures remain correct.
-- Tauri authentication must not depend on cross-site WebView cookies. Persist
-  the server-issued session token securely, restore it through the authenticated
-  backend session endpoint, and complete owner-scoped cloud reconciliation
-  before showing task data. Local mode is always an explicit user choice.
-- Production Expo origins are build inputs: validate every
-  `EXPO_PUBLIC_*_API_URL` before export and clear Metro's cache for production
-  builds.
+- Failed persistence must block quit/relaunch rather than silently losing
+  changes. Keep the app open and surface the error.
+- Desktop exports ignore legacy cloud environment variables and dotenv files.
+  Update checks must be explicit; new task images must persist locally.

@@ -39,9 +39,6 @@ import { useShallow } from 'zustand/react/shallow';
 
 import SearchOverlay from '../components/SearchOverlay';
 import SettingsScreen from '../components/SettingsScreen';
-import SignedOutScreen from '../components/SignedOutScreen';
-import AccountMenu from '../components/account/AccountMenu';
-import AgentCommandPanel from '../components/agent/AgentCommandPanel';
 import DesktopUpdateMenu from '../components/desktop/DesktopUpdateMenu';
 import TaskEditorScreen from '../components/editor/TaskEditorScreen';
 import ResizableDivider from '../components/layout/ResizableDivider';
@@ -62,7 +59,6 @@ import IconButton from '../components/ui/IconButton';
 import Tooltip from '../components/ui/Tooltip';
 import {
   ConfirmationProvider,
-  useConfirmation,
 } from '../components/ui/ConfirmationProvider';
 import {
   ToastProvider,
@@ -74,10 +70,9 @@ import {
   AppView,
 } from '../components/appShellContext';
 import { useCurrentDateKey } from '../hooks/useCurrentDateKey';
+import { listenForLocalApi } from '../services/localApiBridge';
 import {
-  listenForDesktopDeepLinks,
   listenForTrayActions,
-  parseCliAuthorizationDeepLink,
   quitDesktop,
 } from '../services/desktopRuntime';
 import { useDesktopStore } from '../store/desktopStore';
@@ -88,15 +83,6 @@ import {
 } from '../store/todoStore';
 import { searchResultView } from '../store/todoDomain';
 import { translations } from '../content';
-import {
-  getRemoteUser,
-  type RemoteUser,
-} from '../services/authApi';
-import {
-  loadSessionState,
-  saveSessionState,
-  SessionState,
-} from '../services/sessionStorage';
 import {
   NavigationItemId,
   OptionalNavigationItemId,
@@ -114,7 +100,6 @@ const DESKTOP_NAV_WIDTH = 78;
 const DIVIDER_WIDTH = 8;
 const MIN_LIST_WIDTH = 360;
 const MIN_DETAILS_WIDTH = 360;
-const REMOTE_RECONCILE_INTERVAL_MS = 15_000;
 
 const NAV_ICONS: Record<
   NavigationView,
@@ -262,20 +247,14 @@ const AccountTrigger = ({
 };
 
 const AppShell = () => {
-  const requestConfirmation = useConfirmation();
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const activeView = viewFromPathname(pathname);
-  const isLoginRoute = pathname === '/login';
   const isMarketingRoute =
     isMarketingRuntime() && isPublicMarketingPath(pathname);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [sessionState, setSessionState] = useState<SessionState | null>(null);
-  const [currentUser, setCurrentUser] = useState<RemoteUser | null>(null);
   const [selectedTask, setSelectedTask] = useState<SelectedTask | null>(null);
   const [listPaneWidth, setListPaneWidth] = useState<number | null>(null);
-  const [agentOpen, setAgentOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickCreateRequestId, setQuickCreateRequestId] = useState(0);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -284,7 +263,6 @@ const AppShell = () => {
   );
   const [updateMenuOpen, setUpdateMenuOpen] = useState(false);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
-  const [cliDeviceCode, setCliDeviceCode] = useState<string | null>(null);
   const { height, width } = useWindowDimensions();
   const settingsSlideAnim = useRef(new Animated.Value(-width)).current;
   const [navigationDrag, setNavigationDrag] =
@@ -302,7 +280,6 @@ const AppShell = () => {
     persistenceErrorAt,
     reorderNavigationItem,
     setNavigationItemVisible,
-    syncRemote,
   } = useTodoStore(
     useShallow((state) => ({
       clearPersistenceError: state.clearPersistenceError,
@@ -312,7 +289,6 @@ const AppShell = () => {
       persistenceErrorAt: state.persistenceErrorAt,
       reorderNavigationItem: state.reorderNavigationItem,
       setNavigationItemVisible: state.setNavigationItemVisible,
-      syncRemote: state.syncRemote,
     })),
   );
   const {
@@ -447,31 +423,15 @@ const AppShell = () => {
   const changeView = useCallback(
     (view: AppView) => {
       if (!usesDesktopLayout && view === 'settings') {
-        setAccountMenuOpen(false);
         setSettingsPanelOpen(true);
         return;
       }
-      setAccountMenuOpen(false);
       setSelectedTask(null);
       setTaskMenu(null);
       router.push(`/${view}`);
     },
     [router, usesDesktopLayout],
   );
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listenForDesktopDeepLinks((url) => {
-      const code = parseCliAuthorizationDeepLink(url);
-      if (!code) {
-        return;
-      }
-      setCliDeviceCode(code);
-      changeView('settings');
-    }).then((listener) => {
-      unlisten = listener;
-    });
-    return () => unlisten?.();
-  }, [changeView]);
   const openSearchTask = useCallback(
     (id: string) => {
       const todo = useTodoStore
@@ -480,7 +440,6 @@ const AppShell = () => {
       if (!todo) {
         return;
       }
-      setAccountMenuOpen(false);
       setTaskMenu(null);
       router.push(`/${searchResultView(todo)}`);
       setSelectedTask({
@@ -509,12 +468,10 @@ const AppShell = () => {
     Animated.timing(settingsSlideAnim, {
       toValue: settingsPanelOpen ? 0 : -width,
       duration: 260,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [settingsPanelOpen, settingsSlideAnim, width]);
   const openSearch = useCallback(() => {
-    setAccountMenuOpen(false);
-    setAgentOpen(false);
     setTaskMenu(null);
     setSearchOpen(true);
   }, []);
@@ -525,17 +482,6 @@ const AppShell = () => {
     },
     [changeView],
   );
-  const openAgent = useCallback(() => {
-    setAccountMenuOpen(false);
-    setTaskMenu(null);
-    setSelectedTask(null);
-    setAgentOpen(true);
-  }, []);
-  const openAuthentication = useCallback(() => {
-    setAccountMenuOpen(false);
-    setSettingsPanelOpen(false);
-    router.push('/login');
-  }, [router]);
   const setNavigationVisible = useCallback(
     (id: OptionalNavigationItemId, visible: boolean) => {
       setNavigationItemVisible(id, visible);
@@ -546,20 +492,18 @@ const AppShell = () => {
     [activeView, changeView, setNavigationItemVisible],
   );
   const relaunchWithFlush = useCallback(async () => {
-    await flushAppState().catch((error) => {
-      console.warn('Unable to flush data before relaunch.', error);
-    });
-    await relaunchForUpdate();
-  }, [relaunchForUpdate]);
+    try {
+      await flushAppState();
+      await relaunchForUpdate();
+    } catch {
+      notify(labels.notifications.saveFailed, 'error');
+    }
+  }, [relaunchForUpdate, notify, labels.notifications.saveFailed]);
   const handleTrayAction = useCallback(
     (action: string) => {
       if (action === 'new-task') {
         changeView('today');
         setQuickCreateRequestId(Date.now());
-        return;
-      }
-      if (action === 'agent') {
-        openAgent();
         return;
       }
       if (action === 'today' || action === 'milestones') {
@@ -576,20 +520,32 @@ const AppShell = () => {
       }
       if (action === 'quit') {
         void flushAppState()
+          .then(quitDesktop)
           .catch((error) => {
             console.warn('Unable to flush data before quitting.', error);
-          })
-          .finally(() => {
-            void quitDesktop();
+            notify(labels.notifications.saveFailed, 'error');
           });
       }
     },
-    [changeView, openAgent],
+    [changeView, notify, labels.notifications.saveFailed],
   );
 
   useEffect(() => {
     void initializeDesktop();
   }, [initializeDesktop]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenForLocalApi().then((listener) => {
+      if (disposed) listener();
+      else unlisten = listener;
+    }).catch((error) => console.warn('Unable to initialize local CLI.', error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!desktopEnvironment.isDesktop) {
@@ -652,104 +608,8 @@ const AppShell = () => {
   }, [handleTrayAction]);
 
   useEffect(() => {
-    let active = true;
-    loadSessionState()
-      .then(async (sessionState) => {
-        if (!active) {
-          return;
-        }
-        if (sessionState === 'authenticated') {
-          await syncRemote();
-          const user = await getRemoteUser();
-          if (active) {
-            setCurrentUser(user);
-            setSessionState('authenticated');
-          }
-          return;
-        }
-        setCurrentUser(null);
-        setSessionState(sessionState);
-      })
-      .catch(() => {
-        if (active) {
-          setSessionState('signed-out');
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [syncRemote]);
-
-  useEffect(() => {
     if (
       Platform.OS !== 'web' ||
-      sessionState !== 'authenticated' ||
-      isMarketingRoute
-    ) {
-      return undefined;
-    }
-    let active = true;
-    let syncing = false;
-    const reconcile = () => {
-      if (
-        !active ||
-        syncing ||
-        document.visibilityState === 'hidden'
-      ) {
-        return;
-      }
-      syncing = true;
-      void syncRemote()
-        .catch((error) => {
-          console.warn('Unable to refresh cloud changes.', error);
-        })
-        .finally(() => {
-          syncing = false;
-        });
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        reconcile();
-      }
-    };
-    const interval = window.setInterval(
-      reconcile,
-      REMOTE_RECONCILE_INTERVAL_MS,
-    );
-    window.addEventListener('focus', reconcile);
-    document.addEventListener(
-      'visibilitychange',
-      handleVisibilityChange,
-    );
-
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-      window.removeEventListener('focus', reconcile);
-      document.removeEventListener(
-        'visibilitychange',
-        handleVisibilityChange,
-      );
-    };
-  }, [isMarketingRoute, sessionState, syncRemote]);
-
-  useEffect(() => {
-    if (
-      sessionState === 'signed-out' &&
-      !isLoginRoute &&
-      !isMarketingRoute
-    ) {
-      router.replace('/login');
-    }
-  }, [isLoginRoute, isMarketingRoute, router, sessionState]);
-
-  useEffect(() => {
-    if (
-      Platform.OS !== 'web' ||
-      sessionState === null ||
-      sessionState === 'signed-out' ||
-      isLoginRoute ||
       isMarketingRoute
     ) {
       return undefined;
@@ -767,11 +627,6 @@ const AppShell = () => {
         changeView('settings');
         return;
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') {
-        event.preventDefault();
-        openAgent();
-        return;
-      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         openSearch();
@@ -783,8 +638,6 @@ const AppShell = () => {
           setSearchOpen(false);
           return;
         }
-        setAgentOpen(false);
-        setAccountMenuOpen(false);
         setTaskMenu(null);
         setSelectedTask(null);
       }
@@ -794,12 +647,9 @@ const AppShell = () => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [
     changeView,
-    isLoginRoute,
     isMarketingRoute,
-    openAgent,
     openSearch,
     searchOpen,
-    sessionState,
   ]);
 
   useEffect(() => {
@@ -825,45 +675,6 @@ const AppShell = () => {
     persistenceErrorAt,
   ]);
 
-  const signOut = useCallback(() => {
-    setAccountMenuOpen(false);
-    requestConfirmation({
-      cancelText: labels.cancel,
-      confirmText: labels.account.signOut,
-      message: labels.account.signOutMessage,
-      onConfirm: async () => {
-        setSelectedTask(null);
-        setTaskMenu(null);
-        setCurrentUser(null);
-        setSessionState('signed-out');
-        void saveSessionState('signed-out').catch(() => {});
-      },
-      title: labels.account.signOutTitle,
-    });
-  }, [
-    labels.account.signOut,
-    labels.account.signOutMessage,
-    labels.account.signOutTitle,
-    labels.cancel,
-    requestConfirmation,
-  ]);
-
-  const continueSession = async () => {
-    await syncRemote();
-    const user = await getRemoteUser();
-    setCurrentUser(user);
-    setSessionState('authenticated');
-    router.replace(cliDeviceCode ? '/settings' : '/today');
-    await saveSessionState('authenticated');
-  };
-
-  const continueLocally = async () => {
-    setCurrentUser(null);
-    setSessionState('local');
-    router.replace('/today');
-    await saveSessionState('local');
-  };
-
   const shellValue = useMemo<AppShellValue>(
     () => ({
       selectedTaskId,
@@ -874,30 +685,20 @@ const AppShell = () => {
       openCalendarAdd,
       notify,
       changeView,
-      cliDeviceCode,
-      clearCliDeviceCode: () => setCliDeviceCode(null),
-      currentUser,
-      updateCurrentUser: setCurrentUser,
       hiddenNavigationItems,
       setNavigationVisible,
-      openAuthentication,
-      signOut,
     }),
     [
       changeView,
-      cliDeviceCode,
-      currentUser,
       hiddenNavigationItems,
       notify,
       openActiveTask,
-      openAuthentication,
       openCalendarAdd,
       openTaskMenu,
       openTrashedTask,
       quickCreateRequestId,
       selectedTaskId,
       setNavigationVisible,
-      signOut,
     ],
   );
 
@@ -914,11 +715,8 @@ const AppShell = () => {
     !selectedTask &&
     !settingsPanelOpen &&
     navigationItems.some((item) => item.id === activeView);
-  const showAppShell =
-    sessionState !== null &&
-    sessionState !== 'signed-out' &&
-    !isLoginRoute &&
-    !isMarketingRoute;
+  const showAppShell = useTodoStore((state) => state.isHydrated) && !isMarketingRoute;
+  const persistenceReady = useTodoStore((state) => state.persistenceReady);
   const showRoutedContent = showAppShell || isMarketingRoute;
 
   return (
@@ -947,13 +745,8 @@ const AppShell = () => {
                 active={
                   activeView === 'settings' || activeView === 'statistics'
                 }
-                avatarUrl={currentUser?.avatarUrl}
-                label={
-                  currentUser?.name ||
-                  currentUser?.email ||
-                  labels.account.localAccount
-                }
-                onPress={() => setAccountMenuOpen((current) => !current)}
+                label={labels.account.settings}
+                onPress={() => changeView('settings')}
                 tooltipPosition="right"
               />
             </View>
@@ -1002,14 +795,6 @@ const AppShell = () => {
                 />
               </View>
             ) : null}
-            <IconButton
-              icon="sparkles"
-              label={labels.agent.title}
-              onPress={openAgent}
-              size="large"
-              tooltipPosition="right"
-              variant="neutral"
-            />
           </View>
         </SafeAreaView>
       ) : null}
@@ -1026,7 +811,19 @@ const AppShell = () => {
       >
         <View style={styles.fullPane}>
           <AppShellProvider value={shellValue}>
-            <Slot />
+            {showAppShell && !persistenceReady && activeView !== 'settings' ? (
+              <View style={{ padding: 32, gap: 16 }}>
+                <Text style={{ fontSize: 18, color: '#303145' }}>
+                  {language === 'zh' ? '本地数据未能安全读取' : 'Local data could not be safely loaded'}
+                </Text>
+                <Text style={{ fontSize: 14, color: '#666778' }}>
+                  {language === 'zh'
+                    ? '原始文件已保留，写入已暂停。请在设置中恢复备份。'
+                    : 'Original files are preserved and writes are paused. Restore a backup in Settings.'}
+                </Text>
+                <IconButton icon="settings-outline" label={labels.settings.title} onPress={() => changeView('settings')} />
+              </View>
+            ) : <Slot />}
           </AppShellProvider>
         </View>
 
@@ -1107,7 +904,6 @@ const AppShell = () => {
           <View style={styles.mobileUtilityRow}>
             <AccountTrigger
               active={settingsPanelOpen}
-              avatarUrl={currentUser?.avatarUrl}
               label={labels.account.settings}
               onPress={() => setSettingsPanelOpen(true)}
               tooltipPosition="bottom"
@@ -1117,14 +913,6 @@ const AppShell = () => {
                 icon="search-outline"
                 label={labels.search.title}
                 onPress={openSearch}
-                size="large"
-                tooltipPosition="bottom"
-                variant="neutral"
-              />
-              <IconButton
-                icon="sparkles"
-                label={labels.agent.title}
-                onPress={openAgent}
                 size="large"
                 tooltipPosition="bottom"
                 variant="neutral"
@@ -1144,21 +932,6 @@ const AppShell = () => {
           }
           position={taskMenu.position}
           todoId={taskMenu.todoId}
-        />
-      ) : null}
-
-      {showAppShell && accountMenuOpen && usesDesktopLayout ? (
-        <AccountMenu
-          currentUser={currentUser}
-          onClose={() => setAccountMenuOpen(false)}
-          onOpenSettings={() => changeView('settings')}
-          onSignIn={openAuthentication}
-          position={
-            usesDesktopLayout
-              ? undefined
-              : { x: 12, y: 72 }
-          }
-          onSignOut={signOut}
         />
       ) : null}
 
@@ -1196,26 +969,17 @@ const AppShell = () => {
         <Animated.View
           style={[
             styles.settingsPanel,
-            { transform: [{ translateX: settingsSlideAnim }] },
+            { width: Math.min(width, 420), transform: [{ translateX: settingsSlideAnim }] },
           ]}
         >
           <SafeAreaView style={styles.settingsPanelSafeArea}>
             <SettingsScreen
-              cliDeviceCode={cliDeviceCode}
-              currentUser={currentUser}
               hiddenNavigationItems={hiddenNavigationItems}
               onClose={() => setSettingsPanelOpen(false)}
-              onCliDeviceCodeAuthorized={() => setCliDeviceCode(null)}
               onNavigationVisibilityChange={setNavigationVisible}
               onOpenStatistics={() => {
                 setSettingsPanelOpen(false);
                 changeView('statistics');
-              }}
-              onProfileUpdated={setCurrentUser}
-              onSignIn={openAuthentication}
-              onSignOut={() => {
-                setSettingsPanelOpen(false);
-                signOut();
               }}
             />
           </SafeAreaView>
@@ -1229,11 +993,6 @@ const AppShell = () => {
           onOpenTask={openSearchTask}
           selectedTaskId={selectedTaskId}
           visible={searchOpen}
-        />
-        <AgentCommandPanel
-          onClose={() => setAgentOpen(false)}
-          onNotify={notify}
-          visible={agentOpen}
         />
         <QuickAddTaskSheet
           initialDate={quickAddInitialDate ?? undefined}
@@ -1283,23 +1042,6 @@ const AppShell = () => {
           </SafeAreaView>
         </View>
       </Modal>
-    ) : null}
-    {!showAppShell && !isMarketingRoute ? (
-      <View style={StyleSheet.absoluteFill}>
-        {sessionState === null ? (
-          <View style={[styles.appBackground, styles.bootOverlay]} />
-        ) : (
-          <SignedOutScreen
-            onCancel={
-              sessionState !== 'signed-out' && isLoginRoute
-                ? () => router.replace('/today')
-                : undefined
-            }
-            onContinue={continueSession}
-            onContinueLocally={continueLocally}
-          />
-        )}
-      </View>
     ) : null}
     </>
   );

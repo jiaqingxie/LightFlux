@@ -4,11 +4,12 @@
 # through DATABASE_URL, so no database container is defined here. The API binds
 # to localhost; nginx terminates TLS and reverse-proxies to it.
 #
-# Build context is the sibling `server/` directory, which the deploy script
-# syncs next to this file on the server (see deploy/scripts/deploy.sh).
+# Archived recovery build uses server/ and shared/ from the repository root.
 services:
   api:
-    build: ../server
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     env_file:
       - ../server/.env
     restart: unless-stopped

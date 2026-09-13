@@ -1,6 +1,5 @@
 import { createContext, useContext } from 'react';
 
-import type { RemoteUser } from '../services/authApi';
 import type { ToastVariant } from './ui/ToastProvider';
 import type { OpenTaskMenu } from './tasks/useTaskContextMenu';
 import type { OptionalNavigationItemId } from '../types/todo';
@@ -25,23 +24,17 @@ export type AppView =
 export interface AppShellValue {
   selectedTaskId: string | null;
   quickCreateRequestId: number;
-  cliDeviceCode: string | null;
-  clearCliDeviceCode: () => void;
   openTaskMenu: OpenTaskMenu;
   openActiveTask: (id: string) => void;
   openTrashedTask: (id: string) => void;
   openCalendarAdd: (dateKey: string) => void;
   notify: (message: string, variant?: ToastVariant) => void;
   changeView: (view: AppView) => void;
-  currentUser: RemoteUser | null;
-  updateCurrentUser: (user: RemoteUser) => void;
   hiddenNavigationItems: OptionalNavigationItemId[];
   setNavigationVisible: (
     id: OptionalNavigationItemId,
     visible: boolean,
   ) => void;
-  openAuthentication: () => void;
-  signOut: () => void;
 }
 
 const AppShellContext = createContext<AppShellValue | null>(null);

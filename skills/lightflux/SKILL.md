@@ -15,8 +15,11 @@ Never edit LightFlux databases, local state files, or HTTP payloads directly.
 3. Read an existing task or milestone before changing it.
 4. Keep returned entity IDs and versions for mutations.
 
-If no Workspace or Project is selected, stop and ask the user to run
-`lightflux` followed by `lightflux login`.
+The CLI starts the local-only LightFlux desktop app on demand and waits for
+its loopback API; no account or login is required. In CI, set
+`LIGHTFLUX_NO_AUTOSTART=1` to fail without launching a GUI. Run `lightflux` to
+choose a default Project. Do not attempt cloud authorization or read desktop
+credential files.
 
 ## Work On Tasks
 
@@ -25,6 +28,14 @@ If no Workspace or Project is selected, stop and ask the user to run
 3. Add concise progress comments only when they convey durable information.
 4. Complete work with evidence such as commit SHAs, pull-request URLs, checks
    run, and remaining limitations.
+
+## Work On Projects
+
+1. List projects before choosing an ID.
+2. Never rename, reorder, or delete Inbox; the desktop rejects it.
+3. Deleting a Project returns all of its tasks and subtasks to Inbox without
+   discarding anything; preview the affected task list first.
+4. Prefer `--after <project-id>` for placement and stable idempotency keys.
 
 ## Work On Milestones
 
@@ -48,5 +59,8 @@ sequences, content formats, and mutation safety.
 
 ## Availability
 
-Workspace and Project reads plus task, subtask, milestone, content, comment,
-audit, undo, and device authorization commands are available in CLI `0.1.0`.
+Workspace reads, Project create/rename/color/reorder/delete, task, subtask,
+milestone, content, comment, audit and undo commands are available in the
+local-only CLI build. The desktop runs on the same machine and is started on
+demand when needed. Remote/cloud workflows are not supported; do not fall back
+to hosted APIs.

@@ -1,13 +1,7 @@
-name: Server deploy
+name: Archived server deploy (manual recovery only)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "server/**"
-      - "deploy/**"
-      - ".github/workflows/server-deploy.yml"
 
 concurrency:
   group: server-deploy

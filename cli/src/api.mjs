@@ -20,6 +20,8 @@ const request = async ({
   const response = await fetchImplementation(
     `${apiUrl.replace(/\/$/, '')}${path}`,
     {
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
       method,
       headers: {
         Accept: 'application/json',
@@ -30,7 +32,12 @@ const request = async ({
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     },
-  );
+  ).catch((error) => {
+    throw new LightFluxApiError(
+      `Unable to reach LightFlux Desktop. Open the app and retry. ${error.message}`,
+      503,
+    );
+  });
   const responseBody = await response.json().catch(() => ({}));
   if (!response.ok) {
     const unavailable =
@@ -78,6 +85,15 @@ export const createApiClient = ({
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/milestones`,
         {
           body: milestone,
+          idempotencyKey,
+          method: 'POST',
+        },
+      ),
+    createProject: (workspaceId, project, idempotencyKey) =>
+      call(
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/projects`,
+        {
+          body: project,
           idempotencyKey,
           method: 'POST',
         },
@@ -142,12 +158,23 @@ export const createApiClient = ({
           method: 'POST',
         },
       ),
+    mutateProject: (projectId, mutation, idempotencyKey) =>
+      call(
+        `/api/v1/projects/${encodeURIComponent(projectId)}/mutations`,
+        {
+          body: mutation,
+          idempotencyKey,
+          method: 'POST',
+        },
+      ),
     requestDeviceAuthorization: () =>
       call('/api/v1/auth/device', { method: 'POST' }),
     showTask: (taskId) =>
       call(`/api/v1/tasks/${encodeURIComponent(taskId)}`),
     showMilestone: (milestoneId) =>
       call(`/api/v1/milestones/${encodeURIComponent(milestoneId)}`),
+    showProject: (projectId) =>
+      call(`/api/v1/projects/${encodeURIComponent(projectId)}`),
     undoMutation: (mutationId) =>
       call(
         `/api/v1/mutations/${encodeURIComponent(mutationId)}/undo`,

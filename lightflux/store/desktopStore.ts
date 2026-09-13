@@ -122,11 +122,6 @@ export const useDesktopStore = create<DesktopStore>((set, get) => ({
         await applyDesktopPreferences(preferences).catch((error) => {
           console.warn('Unable to apply desktop preferences.', error);
         });
-        if (environment.updaterConfigured) {
-          globalThis.setTimeout(() => {
-            void get().checkForUpdates(false);
-          }, 900);
-        }
       })
       .finally(() => {
         initializing = null;

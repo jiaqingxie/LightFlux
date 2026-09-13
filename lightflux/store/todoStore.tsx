@@ -6,15 +6,12 @@ import {
   clearRuntimeMilestoneNotifications,
   reconcileMilestoneNotifications,
 } from '../services/milestoneNotifications';
-import { mergeConcurrentAppStates } from '../services/appStateMerge';
 import {
   createAppStateBackup,
   loadAppState,
   parseAppStateBackup,
-  reloadRemoteAppState,
   saveAppState,
   saveLocalAppState,
-  synchronizeAppState,
 } from '../services/todoStorage';
 import {
   DEFAULT_HIDDEN_NAVIGATION_ITEM_IDS,
@@ -68,6 +65,7 @@ const PROJECT_COLORS = [
 ];
 
 interface TodoStore {
+  localAutomation?: PersistedAppState['localAutomation'];
   language: Language;
   allTodos: Todo[];
   todos: Todo[];
@@ -86,7 +84,6 @@ interface TodoStore {
   persistenceErrorAt: number | null;
   hydrationStarted: boolean;
   hydrate: () => Promise<void>;
-  syncRemote: () => Promise<void>;
   clearPersistenceError: () => void;
   setLanguage: React.Dispatch<React.SetStateAction<Language>>;
   addTodo: (todo: NewTodo) => void;
@@ -134,7 +131,8 @@ const createInboxProject = (
   sortOrder: 0,
 });
 
-const persistedStoreSlice = (state: PersistedAppState) => ({
+export const persistedStoreSlice = (state: PersistedAppState) => ({
+  localAutomation: state.localAutomation,
   language: state.language,
   ...todoState(state.todos),
   projects: state.projects,
@@ -184,34 +182,6 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
       }
     })();
     return hydrationPromise;
-  },
-
-  syncRemote: async () => {
-    await get().hydrate();
-    if (!get().isHydrated) {
-      return;
-    }
-    const requestedState = persistedState(get());
-    const synchronizedState = await synchronizeAppState(requestedState, {
-      requireRemoteSession: true,
-    });
-    if (!synchronizedState) {
-      return;
-    }
-    if (synchronizedState === requestedState) {
-      set({ persistenceReady: true });
-      return;
-    }
-    const currentState = persistedState(get());
-    const reconciledState = mergeConcurrentAppStates(
-      requestedState,
-      currentState,
-      synchronizedState,
-    );
-    set({
-      ...persistedStoreSlice(reconciledState),
-      persistenceReady: true,
-    });
   },
 
   clearPersistenceError: () => set({ persistenceErrorAt: null }),
@@ -783,7 +753,8 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
     })),
 }));
 
-const persistedState = (state: TodoStore): PersistedAppState => ({
+export const persistedState = (state: TodoStore): PersistedAppState => ({
+  ...(state.localAutomation ? { localAutomation: state.localAutomation } : {}),
   schemaVersion: 12,
   updatedAt: Date.now(),
   analyticsStartedAt: state.analyticsStartedAt,
@@ -822,35 +793,16 @@ export const restoreAppStateBackup = async (
   if (!imported) {
     throw new Error('The selected file is not a valid LightFlux backup.');
   }
-  await saveLocalAppState(imported);
+  const wasReady = useTodoStore.getState().persistenceReady;
+  useTodoStore.setState({ persistenceReady: false });
+  try {
+    await saveLocalAppState(imported);
+  } catch (error) {
+    useTodoStore.setState({ persistenceReady: wasReady, persistenceErrorAt: Date.now() });
+    throw error;
+  }
   useTodoStore.setState({
     ...persistedStoreSlice(imported),
-    isHydrated: true,
-    persistenceErrorAt: null,
-    persistenceReady: true,
-  });
-  try {
-    const synchronized = await saveAppState(imported);
-    useTodoStore.setState({
-      ...persistedStoreSlice(synchronized),
-      persistenceErrorAt: null,
-      persistenceReady: true,
-    });
-  } catch (error) {
-    useTodoStore.setState({
-      persistenceErrorAt: Date.now(),
-    });
-    console.warn(
-      'Backup restored locally but cloud synchronization failed.',
-      error,
-    );
-  }
-};
-
-export const reloadAppStateFromRemote = async (): Promise<void> => {
-  const state = await reloadRemoteAppState();
-  useTodoStore.setState({
-    ...persistedStoreSlice(state),
     isHydrated: true,
     persistenceErrorAt: null,
     persistenceReady: true,
@@ -863,6 +815,7 @@ export const TodoProvider = ({ children }: { children: React.ReactNode }) => {
   const allTodos = useTodoStore((state) => state.allTodos);
   const projects = useTodoStore((state) => state.projects);
   const taskEvents = useTodoStore((state) => state.taskEvents);
+  const localAutomation = useTodoStore((state) => state.localAutomation);
   const allMilestones = useTodoStore((state) => state.allMilestones);
   const navigationOrder = useTodoStore((state) => state.navigationOrder);
   const hiddenNavigationItems = useTodoStore(
@@ -926,20 +879,9 @@ export const TodoProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     const timer = setTimeout(() => {
+      if (!useTodoStore.getState().persistenceReady) return;
       const requestedState = persistedState(useTodoStore.getState());
       saveAppState(requestedState)
-        .then((synchronizedState) => {
-          if (synchronizedState === requestedState) {
-            return;
-          }
-          const currentState = persistedState(useTodoStore.getState());
-          const reconciledState = mergeConcurrentAppStates(
-            requestedState,
-            currentState,
-            synchronizedState,
-          );
-          useTodoStore.setState(persistedStoreSlice(reconciledState));
-        })
         .catch((error: unknown) => {
           console.warn('Unable to save LightFlux data.', error);
           useTodoStore.setState({ persistenceErrorAt: Date.now() });
@@ -957,6 +899,7 @@ export const TodoProvider = ({ children }: { children: React.ReactNode }) => {
     hiddenNavigationItems,
     persistenceReady,
     taskEvents,
+    localAutomation,
   ]);
 
   return children;

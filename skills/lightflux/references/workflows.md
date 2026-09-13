@@ -4,12 +4,13 @@
 
 ```bash
 lightflux
-lightflux login
 lightflux context --json
 ```
 
-Credentials stay in the owner-readable LightFlux credential file or the
-`LIGHTFLUX_TOKEN` environment variable.
+The CLI starts LightFlux Desktop on demand and waits for its loopback API; no
+login, API URL or `LIGHTFLUX_TOKEN` is needed. Automated runs set
+`LIGHTFLUX_NO_AUTOSTART=1` (also implied by `CI=true`) to fail without opening
+a GUI.
 
 ## Discover IDs
 
@@ -20,8 +21,25 @@ lightflux task list --project <project-id> --json
 lightflux task show <task-id> --json
 ```
 
-LightFlux currently exposes one Personal Workspace per account. Every task
+LightFlux exposes one local Workspace per desktop data directory. Every task
 belongs to a Project, and Inbox is the reserved fallback Project.
+
+## Manage Projects
+
+```bash
+lightflux project create "Work" --color '#8B7EFF' --json
+lightflux project create "Next up" --after <project-id> --json
+lightflux project rename <project-id> "New name"
+lightflux project color <project-id> '#55B9A5'
+lightflux project reorder <project-id> --position 0
+lightflux task list --project <project-id> --all --json   # preview before delete
+lightflux project delete <project-id> --yes --json
+```
+
+Inbox is pinned first and cannot be renamed, reordered, or deleted. Deleting a
+Project moves every task and subtask in it to Inbox; nothing is discarded. The
+delete is a normal journal mutation, so it appears in `audit` and can be undone
+while it stays the latest change.
 
 ## Create Tasks And Subtasks
 
@@ -76,7 +94,7 @@ Milestone mutations require the current milestone `version`. Use
 
 ## Read Before Write
 
-Use the returned task or milestone version for every mutation. If the server
+Use the returned task or milestone version for every mutation. If the desktop
 reports a conflict, read the latest entity and decide whether the intended
 change still applies.
 
@@ -109,9 +127,10 @@ lightflux undo <latest-mutation-id>
 Only the latest active Workspace mutation can be undone. Re-read the entity
 and audit list after undo before attempting another write.
 
-## Desktop Reconciliation
+## Desktop Updates
 
-The authenticated desktop app reconciles CLI changes while visible and when it
-regains focus. Allow up to about 15 seconds before treating a missing desktop
-update as a synchronization failure. Do not ask the user to quit the app as a
-normal synchronization step.
+The CLI calls the desktop's loopback API, launching the app first if needed.
+Mutations update the shared store immediately and acknowledge after local
+persistence. No remote sync or polling is involved; restarting is not a refresh
+step. In non-interactive runners, prefer `LIGHTFLUX_NO_AUTOSTART=1` and start
+the desktop explicitly.

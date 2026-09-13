@@ -1,22 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   type DimensionValue,
   Pressable,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
 import { translations } from '../../content';
-import { inputAccentProps } from '../../config/input';
-import {
-  approveCliDevice,
-  loadWorkspaceAudit,
-  undoWorkspaceMutation,
-  WorkspaceMutationAudit,
-} from '../../services/authApi';
+import { handleLocalRequest } from '../../services/localApiBridge';
+import { LocalMutation } from '../../services/localWorkspace';
 import {
   DesktopPreferences,
   DockIconStyle,
@@ -27,7 +21,7 @@ import { useDesktopStore } from '../../store/desktopStore';
 import {
   exportAppStateBackup,
   flushAppState,
-  reloadAppStateFromRemote,
+  useTodoStore,
   restoreAppStateBackup,
 } from '../../store/todoStore';
 import { Language } from '../../types/todo';
@@ -44,27 +38,20 @@ import {
 import styles from './styles';
 
 const DesktopSettingsSections = ({
-  authenticated,
   controlWidth,
-  initialDeviceCode,
   language,
-  onDeviceCodeAuthorized,
   stacked,
 }: {
-  authenticated: boolean;
   controlWidth: DimensionValue;
-  initialDeviceCode?: string | null;
   language: Language;
-  onDeviceCodeAuthorized?: () => void;
   stacked: boolean;
 }) => {
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const [hoveredDockIcon, setHoveredDockIcon] =
     useState<DockIconStyle | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
-  const [deviceCode, setDeviceCode] = useState('');
-  const [deviceCodeBusy, setDeviceCodeBusy] = useState(false);
-  const [activity, setActivity] = useState<WorkspaceMutationAudit[]>([]);
+  const mutations = useTodoStore((state) => state.localAutomation?.mutations);
+  const activity = [...(mutations ?? [])].reverse();
   const [activityBusy, setActivityBusy] = useState(false);
   const confirm = useConfirmation();
   const notify = useToast();
@@ -100,12 +87,6 @@ const DesktopSettingsSections = ({
 
   const focus = (row: string) => (focused: boolean) =>
     setFocusedRow(focused ? row : null);
-  useEffect(() => {
-    const normalized = initialDeviceCode?.toUpperCase();
-    if (normalized && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(normalized)) {
-      setDeviceCode(normalized);
-    }
-  }, [initialDeviceCode]);
   const updatePreferences = (changes: Partial<DesktopPreferences>) => {
     void setPreferences(changes);
   };
@@ -157,10 +138,11 @@ const DesktopSettingsSections = ({
   const handleVersionAction = () => {
     if (updateStatus === 'ready') {
       void flushAppState()
+        .then(relaunchForUpdate)
         .catch((error) => {
           console.warn('Unable to flush data before relaunch.', error);
-        })
-        .then(relaunchForUpdate);
+          notify(desktopLabels.backupFailed, 'error');
+        });
       return;
     }
     if (updateInfo) {
@@ -169,40 +151,14 @@ const DesktopSettingsSections = ({
     }
     void checkForUpdates(true);
   };
-  const handleAuthorizeCli = async () => {
-    setDeviceCodeBusy(true);
-    try {
-      await approveCliDevice(deviceCode);
-      setDeviceCode('');
-      onDeviceCodeAuthorized?.();
-      notify(desktopLabels.cliAuthorized);
-    } catch (error) {
-      console.warn('Unable to authorize CLI device.', error);
-      notify(desktopLabels.cliAuthorizationFailed, 'error');
-    } finally {
-      setDeviceCodeBusy(false);
-    }
-  };
-  const refreshActivity = async () => {
-    setActivityBusy(true);
-    try {
-      setActivity(await loadWorkspaceAudit());
-    } catch (error) {
-      console.warn('Unable to load CLI activity.', error);
-    } finally {
-      setActivityBusy(false);
-    }
-  };
-  const handleUndoMutation = (mutation: WorkspaceMutationAudit) => {
+  const handleUndoMutation = (mutation: LocalMutation) => {
     confirm({
       cancelText: labels.cancel,
       confirmText: desktopLabels.undoMutation,
       message: desktopLabels.undoMutationMessage,
       onConfirm: () => {
         setActivityBusy(true);
-        void undoWorkspaceMutation(mutation.id)
-          .then(reloadAppStateFromRemote)
-          .then(refreshActivity)
+        void handleLocalRequest({ method: 'POST', path: `/api/v1/mutations/${mutation.id}/undo` })
           .then(() => notify(desktopLabels.mutationUndone))
           .catch((error) => {
             console.warn('Unable to undo CLI mutation.', error);
@@ -214,13 +170,6 @@ const DesktopSettingsSections = ({
     });
   };
 
-  useEffect(() => {
-    if (environment.isDesktop && authenticated) {
-      void refreshActivity();
-    } else {
-      setActivity([]);
-    }
-  }, [authenticated, environment.isDesktop]);
   const reminderOptions: SettingOption<
     DesktopPreferences['updateReminder']
   >[] = [
@@ -315,48 +264,12 @@ const DesktopSettingsSections = ({
             </View>
           </View>
 
-          {authenticated ? (
+          {environment.isDesktop ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>
                 {desktopLabels.cliAccess}
               </Text>
               <View style={styles.sectionCard}>
-                <SettingRow
-                  description={desktopLabels.cliAccessDescription}
-                  focused={focusedRow === 'cli-access'}
-                  stacked={stacked}
-                  title={desktopLabels.cliAccess}
-                >
-                  <View style={styles.cliAccessControl}>
-                    <TextInput
-                      {...inputAccentProps}
-                      accessibilityLabel={
-                        desktopLabels.cliDeviceCodePlaceholder
-                      }
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      maxLength={9}
-                      onBlur={() => setFocusedRow(null)}
-                      onChangeText={(value) =>
-                        setDeviceCode(value.toUpperCase())
-                      }
-                      onFocus={() => setFocusedRow('cli-access')}
-                      placeholder={desktopLabels.cliDeviceCodePlaceholder}
-                      style={styles.cliCodeInput}
-                      value={deviceCode}
-                    />
-                    <ActionButton
-                      disabled={
-                        deviceCodeBusy ||
-                        !/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(deviceCode)
-                      }
-                      label={desktopLabels.cliAuthorize}
-                      onFocusChange={focus('cli-access')}
-                      onPress={() => void handleAuthorizeCli()}
-                      size="small"
-                    />
-                  </View>
-                </SettingRow>
                 <SettingRow
                   description={
                     activity.length === 0

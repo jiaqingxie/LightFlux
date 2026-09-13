@@ -1,0 +1,10 @@
+{
+  "name": "@lightflux/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./workspace.mjs",
+  "dependencies": {
+    "lunar-typescript": "^1.8.6"
+  }
+}

@@ -1,13 +1,3 @@
-import { authenticatedFetch } from './authApi';
-
-// Direct `process.env.EXPO_PUBLIC_*` access so Expo inlines the value at build
-// time; reading through an alias leaves it undefined in the web export.
-const uploadApiUrl = (
-  process.env.EXPO_PUBLIC_UPLOAD_API_URL ??
-  process.env.EXPO_PUBLIC_AUTH_API_URL ??
-  ''
-).replace(/\/$/, '');
-
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set([
   'image/avif',
@@ -32,23 +22,11 @@ export class ImageUploadError extends Error {
   }
 }
 
-interface UploadResponse {
-  error?: string;
-  url?: string;
-}
-
 const uploadImage = async (
   imageBody: Blob,
   contentType: string,
   size: number,
 ): Promise<string> => {
-  if (!uploadApiUrl) {
-    throw new ImageUploadError(
-      'not-configured',
-      'Image upload API is not configured.',
-    );
-  }
-
   if (!SUPPORTED_IMAGE_TYPES.has(contentType)) {
     throw new ImageUploadError(
       'unsupported',
@@ -63,31 +41,13 @@ const uploadImage = async (
     );
   }
 
-  const response = await authenticatedFetch(`${uploadApiUrl}/api/uploads`, {
-    body: imageBody,
-    headers: {
-      'Content-Type': contentType,
-    },
-    method: 'POST',
+  // Embed raster bytes so task backups remain portable and work offline.
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new ImageUploadError('upload-failed', 'Unable to read image.'));
+    reader.readAsDataURL(new Blob([imageBody], { type: contentType }));
   });
-  const responseBody = (await response.json()) as UploadResponse;
-
-  if (!response.ok || !responseBody.url) {
-    throw new ImageUploadError(
-      'upload-failed',
-      responseBody.error || 'Unable to upload image.',
-    );
-  }
-
-  const imageUrl = new URL(responseBody.url);
-  if (!['http:', 'https:'].includes(imageUrl.protocol)) {
-    throw new ImageUploadError(
-      'upload-failed',
-      'The upload API returned an invalid image URL.',
-    );
-  }
-
-  return imageUrl.toString();
 };
 
 export const uploadTaskImage = async (file: File): Promise<string> =>

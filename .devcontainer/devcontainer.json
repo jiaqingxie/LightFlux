@@ -3,8 +3,7 @@
   "dockerComposeFile": "../docker-compose.yml",
   "service": "workspace",
   "runServices": [
-    "workspace",
-    "postgres"
+    "workspace"
   ],
   "workspaceFolder": "/workspaces/LightFlux",
   "shutdownAction": "stopCompose",
@@ -12,19 +11,11 @@
   "updateRemoteUserUID": true,
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "forwardPorts": [
-    8081,
-    8787,
-    5432
+    8081
   ],
   "portsAttributes": {
     "8081": {
       "label": "Expo Web"
-    },
-    "8787": {
-      "label": "LightFlux API"
-    },
-    "5432": {
-      "label": "PostgreSQL"
     }
   }
 }

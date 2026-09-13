@@ -129,12 +129,6 @@ fn build_tray_menu<R: Runtime>(
     )
     .accelerator("CmdOrCtrl+N")
     .build(app)?;
-    let agent = MenuItemBuilder::with_id(
-        "agent",
-        localized(language, "AI 快速输入…", "AI quick capture…"),
-    )
-    .accelerator("CmdOrCtrl+J")
-    .build(app)?;
     let today = MenuItemBuilder::with_id(
         "today",
         localized(language, "打开今日安排", "Open Today"),
@@ -167,7 +161,6 @@ fn build_tray_menu<R: Runtime>(
         .item(&summary_item)
         .separator()
         .item(&new_task)
-        .item(&agent)
         .separator()
         .item(&today)
         .item(&milestones);
@@ -318,7 +311,7 @@ pub fn setup(
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
-                "new-task" | "agent" | "today" | "milestones" | "settings" | "update" => {
+                "new-task" | "today" | "milestones" | "settings" | "update" => {
                     emit_tray_action(app, event.id().as_ref())
                 }
                 "show" => show_main_window(app),

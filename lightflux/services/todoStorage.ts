@@ -1,4 +1,5 @@
 import { File, Paths } from 'expo-file-system';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { Platform } from 'react-native';
 
 import {
@@ -6,7 +7,6 @@ import {
   INBOX_PROJECT_ID,
   NAVIGATION_ITEM_IDS,
   OPTIONAL_NAVIGATION_ITEM_IDS,
-  Language,
   Milestone,
   MilestoneDateRule,
   MilestoneType,
@@ -29,34 +29,16 @@ import {
   emptyRichTextDocument,
   isRichTextDocument,
 } from '../utils/richText';
+import { deriveStateUpdatedAt } from './appStateMerge';
+import { isLocalAutomation } from './localWorkspace';
 import {
-  appStatesEqual,
-  deriveStateUpdatedAt,
-  mergeConcurrentAppStates,
-} from './appStateMerge';
-import {
-  isRemoteAuthConfigured,
-  loadRemoteAppState,
-  RemoteAppStateConflictError,
-  RemoteAppStateSnapshot,
-  saveRemoteAppState,
-} from './authApi';
-import {
-  deleteWebState,
   loadWebState,
   saveWebState,
 } from './indexedDbStorage';
 
 const STORAGE_KEY = 'lightflux.app-state.v12';
-const SYNC_METADATA_KEY = 'lightflux.sync-metadata.v12';
 const stateFile = () =>
   new File(Paths.document, 'lightflux-state-v12.json');
-const syncMetadataFile = () =>
-  new File(Paths.document, 'lightflux-sync-metadata-v12.json');
-const legacyStateFile = () =>
-  new File(Paths.document, 'lightflux-state.json');
-const legacySyncMetadataFile = () =>
-  new File(Paths.document, 'lightflux-sync-metadata.json');
 
 const normalizeNavigationOrder = (value: unknown): NavigationItemId[] => {
   const saved = Array.isArray(value)
@@ -366,7 +348,8 @@ export const parsePersistedAppState = (
     if (
       parsed.schemaVersion !== 12 ||
       !Array.isArray(parsed.todos) ||
-      !Array.isArray(parsed.projects)
+      !Array.isArray(parsed.projects) ||
+      (parsed.localAutomation !== undefined && !isLocalAutomation(parsed.localAutomation))
     ) {
       return null;
     }
@@ -453,6 +436,7 @@ export const parsePersistedAppState = (
 
     return {
       schemaVersion: 12,
+      ...(parsed.localAutomation ? { localAutomation: parsed.localAutomation } : {}),
       updatedAt: deriveStateUpdatedAt(
         todosWithMilestones,
         projects,
@@ -502,379 +486,75 @@ export const parseAppStateBackup = (
     ) {
       return null;
     }
-    return parsePersistedAppState(JSON.stringify(backup.state));
+    return requireLocalState(JSON.stringify(backup.state));
   } catch {
     return null;
   }
 };
 
-interface SyncMetadata {
-  baseState: PersistedAppState | null;
-  ownerId: string;
-  revision: number;
-}
-
-let syncMetadataCache: SyncMetadata | null | undefined;
-let activeRemoteOwnerId: string | null = null;
-let remoteSyncEnabled = false;
-let remoteSaveQueue: Promise<void> = Promise.resolve();
-let deviceWriteGeneration = 0;
-
-const emptyAppState = (language: Language = 'zh'): PersistedAppState => {
-  const timestamp = Date.now();
-  return {
-    schemaVersion: 12,
-    updatedAt: timestamp,
-    analyticsStartedAt: timestamp,
-    language,
-    navigationOrder: [...NAVIGATION_ITEM_IDS],
-    hiddenNavigationItems: [...DEFAULT_HIDDEN_NAVIGATION_ITEM_IDS],
-    todos: [],
-    projects: [
-      {
-        id: INBOX_PROJECT_ID,
-        name: language === 'en' ? 'Inbox' : '收件箱',
-        color: '#8B7EFF',
-        createdAt: timestamp,
-        kind: 'inbox',
-        sortOrder: 0,
-      },
-    ],
-    milestones: [],
-    taskEvents: [],
-  };
-};
-
-const loadDeviceState = async (): Promise<PersistedAppState | null> => {
-  if (Platform.OS === 'web') {
-    await Promise.all([
-      deleteWebState('current'),
-      deleteWebState('lightflux.app-state.v1'),
-      deleteWebState('lightflux.sync-metadata.v1'),
-    ]);
-    const rawState = await loadWebState(STORAGE_KEY);
-    return rawState ? parsePersistedAppState(rawState) : null;
-  }
-
-  const oldFile = legacyStateFile();
-  if (oldFile.exists) {
-    oldFile.delete();
-  }
-  const oldSyncFile = legacySyncMetadataFile();
-  if (oldSyncFile.exists) {
-    oldSyncFile.delete();
-  }
-  const file = stateFile();
-  if (!file.exists) {
-    return null;
-  }
-
-  return parsePersistedAppState(await file.text());
-};
-
-const saveDeviceState = async (
-  state: PersistedAppState,
-): Promise<void> => {
-  const serializedState = JSON.stringify(state);
-
-  if (Platform.OS === 'web') {
-    await saveWebState(STORAGE_KEY, serializedState);
-    return;
-  }
-
-  stateFile().write(serializedState);
-};
-
-export const saveLocalAppState = async (
-  state: PersistedAppState,
-): Promise<void> => saveDeviceState(state);
-
-const parseSyncMetadata = (rawValue: string): SyncMetadata | null => {
-  try {
-    const value = JSON.parse(rawValue) as Partial<SyncMetadata>;
-    const baseState =
-      value.baseState === null
-        ? null
-        : parsePersistedAppState(JSON.stringify(value.baseState));
-    if (
-      typeof value.ownerId !== 'string' ||
-      !value.ownerId ||
-      !Number.isSafeInteger(value.revision) ||
-      (value.revision ?? -1) < 0 ||
-      (value.baseState !== null && !baseState)
-    ) {
-      return null;
-    }
-    return {
-      baseState,
-      ownerId: value.ownerId,
-      revision: value.revision as number,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const loadSyncMetadata = async (): Promise<SyncMetadata | null> => {
-  if (syncMetadataCache !== undefined) {
-    return syncMetadataCache;
-  }
-  let rawValue: string | null = null;
-  if (Platform.OS === 'web') {
-    await deleteWebState('lightflux.sync-metadata.v1');
-    rawValue = await loadWebState(SYNC_METADATA_KEY);
-  } else {
-    const oldFile = legacySyncMetadataFile();
-    if (oldFile.exists) {
-      oldFile.delete();
-    }
-    const file = syncMetadataFile();
-    rawValue = file.exists ? await file.text() : null;
-  }
-  syncMetadataCache = rawValue ? parseSyncMetadata(rawValue) : null;
-  return syncMetadataCache;
-};
-
-const saveSyncMetadata = async (
-  metadata: SyncMetadata,
-): Promise<void> => {
-  syncMetadataCache = metadata;
-  const serializedMetadata = JSON.stringify(metadata);
-  if (Platform.OS === 'web') {
-    await saveWebState(SYNC_METADATA_KEY, serializedMetadata);
-    return;
-  }
-  syncMetadataFile().write(serializedMetadata);
-};
-
-const normalizedRemoteState = (
-  snapshot: RemoteAppStateSnapshot,
-): PersistedAppState | null => {
-  if (snapshot.state === null) {
-    return null;
-  }
-  const state = parsePersistedAppState(JSON.stringify(snapshot.state));
+const requireLocalState = (raw: string): PersistedAppState => {
+  const state = parsePersistedAppState(raw);
   if (!state) {
-    throw new Error('The cloud returned an invalid app state.');
+    throw new Error('Unrecognized local data. Original data has been preserved.');
+  }
+  const original = JSON.parse(raw);
+  for (const key of ['todos', 'projects', 'milestones'] as const) {
+    if (Array.isArray(original[key]) && original[key].some(
+      (item: { id?: unknown } | null) => !item || !state[key].some((saved) => saved.id === item.id),
+    )) {
+      throw new Error('Local data contains invalid records. Original data has been preserved.');
+    }
   }
   return state;
 };
 
-const candidateForSnapshot = (
-  localState: PersistedAppState | null,
-  snapshot: RemoteAppStateSnapshot,
-  metadata: SyncMetadata | null,
-): PersistedAppState => {
-  const remoteState = normalizedRemoteState(snapshot);
-  if (metadata?.ownerId && metadata.ownerId !== snapshot.ownerId) {
-    return remoteState ?? emptyAppState(localState?.language);
-  }
-  if (!localState) {
-    return remoteState ?? emptyAppState();
-  }
-  if (!remoteState) {
-    return localState;
-  }
-  if (appStatesEqual(localState, remoteState)) {
-    return remoteState;
-  }
-  const baseState =
-    metadata?.ownerId === snapshot.ownerId ? metadata.baseState : null;
-  if (baseState && appStatesEqual(localState, baseState)) {
-    return remoteState;
-  }
-  if (baseState && appStatesEqual(remoteState, baseState)) {
-    return localState;
-  }
-  return mergeConcurrentAppStates(baseState, localState, remoteState);
-};
-
-const commitCandidate = async (
-  candidate: PersistedAppState,
-  initialSnapshot: RemoteAppStateSnapshot,
-  initialBaseState: PersistedAppState | null,
-): Promise<PersistedAppState> => {
-  let snapshot = initialSnapshot;
-  let baseState = initialBaseState;
-  let nextState = candidate;
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const remoteState = normalizedRemoteState(snapshot);
-    if (remoteState && appStatesEqual(nextState, remoteState)) {
-      await saveSyncMetadata({
-        baseState: remoteState,
-        ownerId: snapshot.ownerId,
-        revision: snapshot.revision,
-      });
-      return remoteState;
-    }
-    try {
-      const revision = await saveRemoteAppState(
-        nextState,
-        snapshot.revision,
-      );
-      await saveSyncMetadata({
-        baseState: nextState,
-        ownerId: snapshot.ownerId,
-        revision,
-      });
-      return nextState;
-    } catch (error) {
-      if (!(error instanceof RemoteAppStateConflictError)) {
-        throw error;
-      }
-      const conflictSnapshot = {
-        ...error.snapshot,
-        ownerId: error.snapshot.ownerId || snapshot.ownerId,
-      };
-      const conflictState = normalizedRemoteState(conflictSnapshot);
-      if (conflictSnapshot.ownerId !== snapshot.ownerId) {
-        nextState =
-          conflictState ?? emptyAppState(nextState.language);
-        baseState = null;
-      } else if (conflictState) {
-        nextState = mergeConcurrentAppStates(
-          remoteState ?? baseState,
-          nextState,
-          conflictState,
-        );
-        baseState = conflictState;
-      }
-      snapshot = conflictSnapshot;
-    }
-  }
-
-  throw new Error('Unable to synchronize after repeated cloud conflicts.');
-};
-
-export const synchronizeAppState = async (
-  localState: PersistedAppState | null,
-  options: { requireRemoteSession?: boolean } = {},
-): Promise<PersistedAppState | null> => {
-  if (!isRemoteAuthConfigured) {
-    return localState;
-  }
-  const snapshot = await loadRemoteAppState();
-  if (!snapshot) {
-    activeRemoteOwnerId = null;
-    if (options.requireRemoteSession) {
-      throw new Error('An authenticated cloud session is required.');
-    }
-    return localState;
-  }
-  activeRemoteOwnerId = snapshot.ownerId;
-  remoteSyncEnabled = true;
-  const metadata = await loadSyncMetadata();
-  const candidate = candidateForSnapshot(localState, snapshot, metadata);
-  const baseState =
-    metadata?.ownerId === snapshot.ownerId ? metadata.baseState : null;
-  const synchronized = await commitCandidate(
-    candidate,
-    snapshot,
-    baseState,
-  );
-  await saveDeviceState(synchronized);
-  return synchronized;
-};
-
-export const reloadRemoteAppState =
-  async (): Promise<PersistedAppState> => {
-    const snapshot = await loadRemoteAppState();
-    if (!snapshot) {
-      throw new Error('An authenticated cloud session is required.');
-    }
-    const state = normalizedRemoteState(snapshot);
-    if (!state) {
-      throw new Error('The cloud Workspace has no app state.');
-    }
-    activeRemoteOwnerId = snapshot.ownerId;
-    remoteSyncEnabled = true;
-    await saveSyncMetadata({
-      baseState: state,
-      ownerId: snapshot.ownerId,
-      revision: snapshot.revision,
-    });
-    await saveDeviceState(state);
-    return state;
-  };
-
-const saveRemoteKnownState = async (
-  state: PersistedAppState,
-): Promise<PersistedAppState> => {
-  if (!activeRemoteOwnerId) {
-    return state;
-  }
-  const metadata = await loadSyncMetadata();
-  if (
-    !metadata ||
-    metadata.ownerId !== activeRemoteOwnerId
-  ) {
-    return (await synchronizeAppState(state)) ?? state;
-  }
-  if (appStatesEqual(state, metadata.baseState)) {
-    return state;
-  }
-
-  try {
-    const revision = await saveRemoteAppState(state, metadata.revision);
-    await saveSyncMetadata({
-      baseState: state,
-      ownerId: metadata.ownerId,
-      revision,
-    });
-    return state;
-  } catch (error) {
-    if (!(error instanceof RemoteAppStateConflictError)) {
-      throw error;
-    }
-    const snapshot = {
-      ...error.snapshot,
-      ownerId: error.snapshot.ownerId || metadata.ownerId,
-    };
-    const remoteState = normalizedRemoteState(snapshot);
-    const candidate = remoteState
-      ? mergeConcurrentAppStates(metadata.baseState, state, remoteState)
-      : state;
-    return commitCandidate(candidate, snapshot, metadata.baseState);
-  }
-};
-
-export const resetRemoteSyncContext = (): void => {
-  activeRemoteOwnerId = null;
-  remoteSyncEnabled = false;
-};
-
 export const loadAppState = async (): Promise<PersistedAppState | null> => {
-  const deviceState = await loadDeviceState();
-  if (!isRemoteAuthConfigured || !remoteSyncEnabled) {
-    return deviceState;
+  if (Platform.OS === 'web') {
+    if (isTauri()) {
+      const saved = await invoke<string | null>('load_local_app_state');
+      if (saved !== null) return requireLocalState(saved);
+    }
+    const raw = await loadWebState(STORAGE_KEY);
+    if (raw !== null) {
+      const state = requireLocalState(raw);
+      if (isTauri()) {
+        // Keep the WebView copy untouched as the migration recovery source.
+        await invoke('save_local_app_state', { content: raw });
+      }
+      return state;
+    }
+    for (const key of ['current', 'lightflux.app-state.v1']) {
+      if (await loadWebState(key) !== null) {
+        throw new Error('Legacy local data requires recovery; it has not been deleted.');
+      }
+    }
+    return null;
   }
-
-  try {
-    return await synchronizeAppState(deviceState);
-  } catch (error) {
-    console.warn('Unable to load cloud data; using the local cache.', error);
-    return deviceState;
-  }
+  const file = stateFile();
+  return file.exists ? requireLocalState(await file.text()) : null;
 };
 
-export const saveAppState = async (
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+export const saveAppState = (
   state: PersistedAppState,
+  restore = false,
 ): Promise<PersistedAppState> => {
-  const writeGeneration = ++deviceWriteGeneration;
-  await saveDeviceState(state);
-  if (!isRemoteAuthConfigured || !remoteSyncEnabled) {
+  const content = JSON.stringify(state);
+  const write = writeQueue.then(async () => {
+    if (Platform.OS === 'web') {
+      if (isTauri()) {
+        await invoke('save_local_app_state', { content, restore });
+      } else {
+        await saveWebState(STORAGE_KEY, content);
+      }
+    } else {
+      stateFile().write(content);
+    }
     return state;
-  }
-
-  const queuedSave = remoteSaveQueue.then(() => saveRemoteKnownState(state));
-  remoteSaveQueue = queuedSave.then(
-    () => undefined,
-    () => undefined,
-  );
-  const synchronized = await queuedSave;
-  if (writeGeneration === deviceWriteGeneration) {
-    await saveDeviceState(synchronized);
-  }
-  return synchronized;
+  });
+  writeQueue = write.catch(() => undefined);
+  return write;
 };
+
+export const saveLocalAppState = (state: PersistedAppState) => saveAppState(state, true);

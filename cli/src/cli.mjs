@@ -3,21 +3,19 @@
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 
-import { createApiClient, LightFluxApiError } from './api.mjs';
+import { createApiClient } from './api.mjs';
 import { readConfig, writeConfig } from './config.mjs';
 import { loadTaskContent, richTextPreview } from './content.mjs';
 import { selectWorkspaceContext } from './context.mjs';
 import {
   deleteCredentials,
-  readCredentials,
-  writeCredentials,
 } from './credentials.mjs';
-import { openDesktopAuthorization } from './desktop.mjs';
+import { connectLocalDesktop } from './local.mjs';
 import { milestoneDateRule, reminderOffsets } from './milestone.mjs';
 
 const VERSION = '0.1.0';
-const DEFAULT_API_URL = 'https://lightflux.site';
 const VALUE_FLAGS = new Set([
+  '--after',
   '--date',
   '--color',
   '--content',
@@ -32,6 +30,7 @@ const VALUE_FLAGS = new Set([
   '--missing-leap-month-policy',
   '--notes',
   '--parent',
+  '--position',
   '--priority',
   '--project',
   '--reminders',
@@ -44,11 +43,17 @@ const printHelp = () => {
   process.stdout.write(`LightFlux CLI ${VERSION}
 
 Usage:
-  lightflux                         Configure API context
-  lightflux login                   Authorize this CLI from Desktop Settings
-  lightflux logout                  Revoke the current CLI token
+  lightflux                         Select local desktop Project
+  lightflux login                   Check local desktop connection (no account)
+  lightflux logout                  Remove legacy cloud credentials
   lightflux context [--json]        Show selected Workspace and Project
   lightflux projects [--json]       List Projects
+  lightflux project show <id> [--json]
+  lightflux project create <name> [--color <#rrggbb>] [--after <id>] [--json]
+  lightflux project rename <id> <name> [--json]
+  lightflux project color <id> <#rrggbb> [--json]
+  lightflux project reorder <id> --position <n> [--json]
+  lightflux project delete <id> [--yes] [--json]
   lightflux audit [--json]          Show recent CLI mutations
   lightflux undo <mutation-id>      Undo the latest mutation
   lightflux task list [--project <id>] [--parent <id>] [--root] [--all] [--trash] [--json]
@@ -157,145 +162,48 @@ const output = (value, json, human) => {
   );
 };
 
-const requireConfig = async () => {
-  const config = await readConfig();
-  if (!config) {
-    throw new Error('LightFlux is not configured. Run `lightflux` first.');
-  }
-  return config;
-};
-
-const token = async () =>
-  process.env.LIGHTFLUX_TOKEN?.trim() ||
-  (await readCredentials())?.token ||
-  null;
-
 const authenticatedClient = async () => {
-  const config = await requireConfig();
-  const accessToken = await token();
-  if (!accessToken) {
-    throw new Error('LightFlux CLI is not logged in. Run `lightflux login`.');
-  }
+  const { connection, probed } = await connectLocalDesktop({
+    probe: async (connectionDescriptor) => {
+      const client = createApiClient(connectionDescriptor);
+      const projects = await client.listProjects('local');
+      return { client, projects };
+    },
+  });
+  const { client, projects } = probed;
+  const saved = await readConfig();
+  const project = projects.find((item) => saved?.workspaceId === 'local' && item.id === saved?.projectId)
+    ?? projects.find((item) => item.kind === 'inbox') ?? projects[0];
   return {
-    client: createApiClient({ apiUrl: config.apiUrl, token: accessToken }),
-    config,
+    client,
+    config: { schemaVersion: 1, apiUrl: connection.apiUrl, workspaceId: 'local', workspaceName: 'Local Workspace', projectId: project?.id, projectName: project?.name },
   };
 };
 
+const requireConfig = async () => (await authenticatedClient()).config;
+
 const runSetup = async () => {
+  const { client, config } = await authenticatedClient();
   if (!process.stdin.isTTY) {
-    throw new Error('Interactive setup requires a terminal.');
+    process.stdout.write('Connected to local LightFlux Desktop. No login required.\n');
+    return;
   }
   const prompts = createPrompts();
   try {
-    const existing = await readConfig();
-    const apiUrl = (
-      await prompts.ask(
-        'LightFlux API URL',
-        existing?.apiUrl ?? DEFAULT_API_URL,
-      )
-    ).replace(/\/$/, '');
-    const parsedUrl = new URL(apiUrl);
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      throw new Error('The API URL must use HTTP or HTTPS.');
-    }
-    const sameApi = existing?.apiUrl === apiUrl;
-    const destination = await writeConfig({
-      apiUrl,
-      schemaVersion: 1,
-      ...(sameApi
-        ? {
-            workspaceId: existing.workspaceId,
-            workspaceName: existing.workspaceName,
-            projectId: existing.projectId,
-            projectName: existing.projectName,
-          }
-        : {}),
-    });
-    process.stdout.write(`Configuration saved: ${destination}\n`);
-    if (!(await token())) {
-      process.stdout.write('Run `lightflux login` to authorize the CLI.\n');
-    }
-  } finally {
-    prompts.close();
-  }
+    const context = await selectWorkspaceContext({ client, choose: prompts.choose });
+    await writeConfig({ ...config, ...context });
+    process.stdout.write('Local desktop context saved.\n');
+  } finally { prompts.close(); }
 };
 
 const runLogin = async () => {
-  if (!process.stdin.isTTY) {
-    throw new Error('Device authorization requires a terminal.');
-  }
-  const prompts = createPrompts();
-  try {
-    const config = await requireConfig();
-    const client = createApiClient({ apiUrl: config.apiUrl });
-    const authorization = await client.requestDeviceAuthorization();
-    const desktopOpened = openDesktopAuthorization(
-      authorization.verificationUri,
-    );
-    process.stdout.write(
-      [
-        `Device code: ${authorization.userCode}`,
-        desktopOpened
-          ? 'Opened LightFlux Desktop.'
-          : `Open ${authorization.verificationUri}`,
-        'In Desktop Settings, confirm CLI access.',
-        'Waiting for approval...',
-        '',
-      ].join('\n'),
-    );
-    const deadline = Date.now() + authorization.expiresIn * 1000;
-    let result;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, authorization.interval * 1000),
-      );
-      try {
-        result = await client.exchangeDeviceAuthorization(
-          authorization.deviceCode,
-        );
-        break;
-      } catch (error) {
-        if (
-          error instanceof LightFluxApiError &&
-          error.code === 'authorization_pending'
-        ) {
-          continue;
-        }
-        throw error;
-      }
-    }
-    if (!result?.accessToken) {
-      throw new Error('Device authorization expired.');
-    }
-    const context = await selectWorkspaceContext({
-      client: createApiClient({
-        apiUrl: config.apiUrl,
-        token: result.accessToken,
-      }),
-      choose: prompts.choose,
-    });
-    await writeConfig({ ...config, ...context, schemaVersion: 1 });
-    await writeCredentials(result.accessToken);
-    process.stdout.write('LightFlux CLI authorized.\n');
-  } finally {
-    prompts.close();
-  }
+  await authenticatedClient();
+  process.stdout.write('Connected to local LightFlux Desktop. No account or login required.\n');
 };
 
 const runLogout = async () => {
-  const config = await requireConfig();
-  const accessToken = await token();
-  if (accessToken) {
-    await createApiClient({
-      apiUrl: config.apiUrl,
-      token: accessToken,
-    })
-      .logout()
-      .catch(() => undefined);
-  }
   await deleteCredentials();
-  process.stdout.write('LightFlux CLI credentials removed.\n');
+  process.stdout.write('Legacy CLI credentials removed. Local desktop access uses your operating-system account.\n');
 };
 
 const showContext = async (json) => {
@@ -706,6 +614,108 @@ const runMilestone = async (args) => {
   );
 };
 
+const runProject = async (args) => {
+  const action = args[0];
+  const values = positionals(args.slice(1));
+  const json = args.includes('--json');
+  const { client, config } = await authenticatedClient();
+
+  if (action === 'show') {
+    const projectId = requireId(values[0], 'Project ID');
+    const result = await client.showProject(projectId);
+    output(result, json, (value) =>
+      [
+        `${value.project.id}\t${value.project.kind}\t${value.project.name}`,
+        `Color: ${value.project.color}`,
+        `Order: ${value.project.sortOrder}`,
+      ].join('\n'),
+    );
+    return;
+  }
+
+  const idempotencyKey =
+    option(args, '--idempotency-key') ?? randomUUID();
+
+  if (action === 'create') {
+    const name = requireId(values.join(' '), 'Project name');
+    const result = await client.createProject(
+      config.workspaceId ?? 'local',
+      {
+        name,
+        ...(option(args, '--color') !== undefined
+          ? { color: option(args, '--color') }
+          : {}),
+        ...(option(args, '--after') !== undefined
+          ? { afterProjectId: option(args, '--after') }
+          : {}),
+      },
+      idempotencyKey,
+    );
+    output(result, json, (value) =>
+      `Created project ${value.project.id}: ${value.project.name}`,
+    );
+    return;
+  }
+
+  const projectId = requireId(values[0], 'Project ID');
+  let mutation;
+  if (action === 'rename') {
+    mutation = {
+      action: 'project.update',
+      name: requireId(values.slice(1).join(' '), 'Project name'),
+    };
+  } else if (action === 'color') {
+    mutation = {
+      action: 'project.update',
+      color: requireId(values[1], 'Project color'),
+    };
+  } else if (action === 'reorder') {
+    mutation = {
+      action: 'project.reorder',
+      position: integerOption(args, '--position', true),
+    };
+  } else if (action === 'delete') {
+    if (!args.includes('--yes')) {
+      if (!process.stdin.isTTY) {
+        throw new Error(
+          'Project delete requires --yes in non-interactive mode.',
+        );
+      }
+      const prompts = createPrompts();
+      try {
+        if (
+          !(await prompts.confirm(
+            `Delete project ${projectId}? Its tasks return to Inbox.`,
+            false,
+          ))
+        ) {
+          return;
+        }
+      } finally {
+        prompts.close();
+      }
+    }
+    mutation = { action: 'project.delete' };
+  } else {
+    throw new Error(`Unknown project command: ${action ?? ''}`);
+  }
+
+  const result = await client.mutateProject(
+    projectId,
+    mutation,
+    idempotencyKey,
+  );
+  output(result, json, (value) => {
+    if (action === 'delete') {
+      return `Deleted project ${projectId}; its tasks returned to Inbox.`;
+    }
+    if (action === 'reorder') {
+      return `Project ${projectId} moved to position ${mutation.position}.`;
+    }
+    return `Updated project ${value.project.id}: ${value.project.name}`;
+  });
+};
+
 const requireId = (value, name) => {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`${name} is required.`);
@@ -728,6 +738,8 @@ const main = async () => {
     await showContext(args.includes('--json'));
   } else if (command === 'projects') {
     await listProjects(args.slice(1));
+  } else if (command === 'project') {
+    await runProject(args.slice(1));
   } else if (command === 'audit') {
     await showAudit(args.slice(1));
   } else if (command === 'undo') {

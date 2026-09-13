@@ -35,7 +35,11 @@ RSYNC_SSH="ssh -p ${SSH_PORT} ${SSH_OPTS}"
 log() { echo "=== $* ==="; }
 
 log "ensure remote directories exist"
-${SSH} "mkdir -p ${REMOTE_DIR}/server ${REMOTE_DIR}/deploy"
+${SSH} "mkdir -p ${REMOTE_DIR}/server ${REMOTE_DIR}/deploy ${REMOTE_DIR}/shared"
+
+rsync -az -e "${RSYNC_SSH}" \
+  --exclude 'node_modules' \
+  "${REPO_ROOT}/shared/" "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/shared/"
 
 log "sync server source (excluding secrets, deps, local data)"
 rsync -az --delete -e "${RSYNC_SSH}" \

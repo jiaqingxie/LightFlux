@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod desktop;
+mod local;
 
 fn main() {
     let builder = tauri::Builder::default()
+        .manage(local::LocalStorage(std::sync::Mutex::new(())))
+        .manage(local::LocalApi::default())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -14,9 +17,16 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
-        .setup(desktop::setup)
+        .setup(|app| {
+            desktop::setup(app)?;
+            local::start_api(app.handle()).map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .on_window_event(desktop::handle_window_event)
         .invoke_handler(tauri::generate_handler![
+            local::load_local_app_state,
+            local::save_local_app_state,
+            local::reply_local_api,
             desktop::apply_desktop_preferences,
             desktop::desktop_environment,
             desktop::export_app_state_backup,

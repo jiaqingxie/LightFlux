@@ -1,10 +1,5 @@
-import MarketingHome from '../components/marketing/MarketingHome';
-import MarketingRoute from '../components/marketing/MarketingRoute';
+import { Redirect } from 'expo-router';
 
 export default function Index() {
-  return (
-    <MarketingRoute>
-      <MarketingHome />
-    </MarketingRoute>
-  );
+  return <Redirect href="/today" />;
 }

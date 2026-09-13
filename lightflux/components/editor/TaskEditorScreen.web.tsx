@@ -183,7 +183,7 @@ const TaskEditorScreen = ({
       extensions: [
         StarterKit,
         Image.configure({
-          allowBase64: false,
+          allowBase64: true,
           HTMLAttributes: { loading: 'lazy' },
         }),
         Placeholder.configure({

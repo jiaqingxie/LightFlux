@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@better-auth/expo": "^1.7.1",
+    "@lightflux/domain": "file:../shared",
     "better-auth": "^1.7.1",
     "lunar-typescript": "^1.8.6",
     "nodemailer": "^10.0.1",

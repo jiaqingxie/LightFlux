@@ -1,5 +1,5 @@
-// Authentication is rendered by the root shell so it can restore the session
-// before any routed application surface is mounted.
+import { Redirect } from 'expo-router';
+
 export default function LoginRoute() {
-  return null;
+  return <Redirect href="/today" />;
 }

@@ -117,3 +117,50 @@ test('milestone requests use Workspace and entity endpoints', async () => {
     'https://api.example.com/api/v1/milestones/milestone%2F1/mutations',
   );
 });
+
+test('project requests use Workspace create and Project mutation endpoints', async () => {
+  const calls = [];
+  const client = createApiClient({
+    apiUrl: 'https://api.example.com',
+    token: 'token',
+    fetchImplementation: async (...args) => {
+      calls.push(args);
+      return Response.json({ project: { id: 'p1' } });
+    },
+  });
+
+  await client.createProject(
+    'local',
+    { name: 'Work', color: '#8b7eff', afterProjectId: 'inbox' },
+    'create-project',
+  );
+  await client.mutateProject(
+    'p1',
+    { action: 'project.update', name: 'Work 2' },
+    'rename-project',
+  );
+  await client.showProject('p1');
+
+  assert.equal(
+    calls[0][0],
+    'https://api.example.com/api/v1/workspaces/local/projects',
+  );
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(calls[0][1].headers['Idempotency-Key'], 'create-project');
+  assert.deepEqual(JSON.parse(calls[0][1].body), {
+    name: 'Work',
+    color: '#8b7eff',
+    afterProjectId: 'inbox',
+  });
+  assert.equal(
+    calls[1][0],
+    'https://api.example.com/api/v1/projects/p1/mutations',
+  );
+  assert.equal(calls[1][1].headers['Idempotency-Key'], 'rename-project');
+  assert.deepEqual(JSON.parse(calls[1][1].body), {
+    action: 'project.update',
+    name: 'Work 2',
+  });
+  assert.equal(calls[2][0], 'https://api.example.com/api/v1/projects/p1');
+  assert.equal(calls[2][1].method, 'GET');
+});

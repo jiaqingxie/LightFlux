@@ -1,11 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   type DimensionValue,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -13,14 +12,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { translations } from '../content';
-import type { RemoteUser } from '../services/authApi';
 import { useTodoStore } from '../store/todoStore';
 import { Language } from '../types/todo';
 import {
   OPTIONAL_NAVIGATION_ITEM_IDS,
   OptionalNavigationItemId,
 } from '../types/todo';
-import ProfileCard from './account/ProfileCard';
 import DesktopSettingsSections from './settings/DesktopSettingsSections';
 import {
   SettingOption,
@@ -31,30 +28,18 @@ import sharedStyles from './settings/styles';
 import IconButton from './ui/IconButton';
 
 const SettingsScreen = ({
-  cliDeviceCode,
-  currentUser,
   hiddenNavigationItems,
-  onCliDeviceCodeAuthorized,
   onNavigationVisibilityChange,
   onClose,
   onOpenStatistics,
-  onProfileUpdated,
-  onSignIn,
-  onSignOut,
 }: {
-  cliDeviceCode?: string | null;
-  currentUser: RemoteUser | null;
   hiddenNavigationItems: OptionalNavigationItemId[];
-  onCliDeviceCodeAuthorized?: () => void;
   onNavigationVisibilityChange: (
     id: OptionalNavigationItemId,
     visible: boolean,
   ) => void;
   onClose?: () => void;
   onOpenStatistics: () => void;
-  onProfileUpdated: (user: RemoteUser) => void;
-  onSignIn: () => void;
-  onSignOut: () => void;
 }) => {
   const { width } = useWindowDimensions();
   const compact = width < 520;
@@ -66,7 +51,6 @@ const SettingsScreen = ({
       : 280;
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
-  const [signInHovered, setSignInHovered] = useState(false);
   const language = useTodoStore((state) => state.language);
   const setLanguage = useTodoStore((state) => state.setLanguage);
   const labels = translations[language];
@@ -75,57 +59,6 @@ const SettingsScreen = ({
     { label: labels.settings.chinese, value: 'zh' },
     { label: labels.settings.english, value: 'en' },
   ];
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        accountCard: {
-          alignItems: 'center',
-          flexDirection: 'row',
-          paddingHorizontal: compact ? 0 : 14,
-          paddingVertical: compact ? 5 : 10,
-        },
-        accountInfo: {
-          flex: 1,
-        },
-        signInButton: {
-          alignItems: 'center',
-          backgroundColor: '#6759E8',
-          borderRadius: 8,
-          flexDirection: 'row',
-          gap: 5,
-          minHeight: compact ? 30 : 32,
-          paddingHorizontal: compact ? 9 : 11,
-        },
-        signInButtonHovered: {
-          backgroundColor: '#594CCD',
-        },
-        signInButtonPressed: {
-          opacity: 0.76,
-          transform: [{ scale: 0.97 }],
-        },
-        signInText: {
-          color: '#FFFFFF',
-          fontSize: compact ? 11 : 12,
-          fontWeight: '500',
-        },
-        localAvatar: {
-          alignItems: 'center',
-          backgroundColor: '#EDE9FF',
-          borderRadius: compact ? 15 : 20,
-          height: compact ? 30 : 40,
-          justifyContent: 'center',
-          marginRight: compact ? 8 : 10,
-          width: compact ? 30 : 40,
-        },
-        localEmail: {
-          color: '#2E2F41',
-          fontSize: compact ? 13 : 14,
-          fontWeight: '500',
-        },
-      }),
-    [compact],
-  );
-
   return (
     <View style={sharedStyles.screen}>
       <ExpoStatusBar style="dark" />
@@ -158,62 +91,6 @@ const SettingsScreen = ({
                 variant="transparent"
               />
             ) : null}
-          </View>
-
-          <View style={[sharedStyles.section, compact && sharedStyles.sectionCompact]}>
-            <Text
-              style={[
-                sharedStyles.sectionTitle,
-                compact && sharedStyles.sectionTitleCompact,
-              ]}
-            >
-              {labels.settings.accountTitle}
-            </Text>
-            <View
-              style={[
-                sharedStyles.sectionCard,
-                compact && sharedStyles.sectionCardCompact,
-              ]}
-            >
-              {currentUser ? (
-                <ProfileCard
-                  cancelLabel={labels.cancel}
-                  compact={compact}
-                  currentUser={currentUser}
-                  labels={labels.settings}
-                  onProfileUpdated={onProfileUpdated}
-                  onSignOut={onSignOut}
-                />
-              ) : (
-                <View style={styles.accountCard}>
-                  <View style={styles.localAvatar}>
-                    <Ionicons color="#6759E8" name="phone-portrait-outline" size={compact ? 16 : 22} />
-                  </View>
-                  <View style={styles.accountInfo}>
-                    <Text style={styles.localEmail}>
-                      {labels.settings.localOnly}
-                    </Text>
-                  </View>
-                  <Pressable
-                    accessibilityLabel={labels.settings.signIn}
-                    accessibilityRole="button"
-                    onHoverIn={() => setSignInHovered(true)}
-                    onHoverOut={() => setSignInHovered(false)}
-                    onPress={onSignIn}
-                    style={({ pressed }) => [
-                      styles.signInButton,
-                      signInHovered && styles.signInButtonHovered,
-                      pressed && styles.signInButtonPressed,
-                    ]}
-                  >
-                    <Ionicons color="#FFFFFF" name="log-in-outline" size={14} />
-                    <Text style={styles.signInText}>
-                      {labels.settings.signIn}
-                    </Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
           </View>
 
           <View style={[sharedStyles.section, compact && sharedStyles.sectionCompact]}>
@@ -365,11 +242,8 @@ const SettingsScreen = ({
           </View>
 
           <DesktopSettingsSections
-            authenticated={Boolean(currentUser)}
-            initialDeviceCode={cliDeviceCode}
             controlWidth={controlWidth}
             language={language}
-            onDeviceCodeAuthorized={onCliDeviceCodeAuthorized}
             stacked={stacked}
           />
         </ScrollView>

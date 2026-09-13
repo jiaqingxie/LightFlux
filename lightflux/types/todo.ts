@@ -144,6 +144,7 @@ export interface Milestone {
 }
 
 export interface PersistedAppState {
+  localAutomation?: import('../services/localWorkspace').LocalAutomation;
   schemaVersion: 12;
   updatedAt: number;
   analyticsStartedAt: number;
