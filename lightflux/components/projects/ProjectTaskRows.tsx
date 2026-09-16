@@ -101,7 +101,7 @@ export const ProjectTask = ({
   return (
     <View
       accessibilityState={{ selected }}
-      className={`${nested ? 'ml-6 min-h-[40px] px-2' : 'min-h-[48px] px-2'} my-0.5 flex-row items-center border-b ${
+      className={`${nested ? 'ml-6 min-h-[34px] px-2' : 'min-h-[40px] px-2'} flex-row items-center border-b ${
         selected
           ? nested
             ? 'rounded-[8px] border-transparent bg-[#F6F4FF]'

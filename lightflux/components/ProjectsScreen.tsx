@@ -11,7 +11,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { inputAccentProps } from '../config/input';
-import { DESKTOP_LAYOUT_BREAKPOINT } from '../config/layout';
+import {
+  DESKTOP_LAYOUT_BREAKPOINT,
+  listContentMaxWidth,
+} from '../config/layout';
 import ProjectActionMenu from './projects/ProjectActionMenu';
 import ProjectSectionCard from './projects/ProjectSectionCard';
 import { useProjectsController } from './projects/useProjectsController';
@@ -44,7 +47,7 @@ const ProjectsScreen = ({
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          style={styles.scroll}
+          style={[styles.scroll, { maxWidth: listContentMaxWidth(width) }]}
         >
           {!compact ? (
             <View className="flex-row items-center justify-between pb-5 pt-4">
@@ -146,7 +149,6 @@ const styles = StyleSheet.create({
   },
   scroll: {
     alignSelf: 'center',
-    maxWidth: 760,
     width: '100%',
   },
   content: {

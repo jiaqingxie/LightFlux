@@ -134,7 +134,7 @@ const ProjectHeader = ({
   return (
     <View
       accessibilityState={{ selected }}
-      className="flex-row items-center px-4 py-4"
+      className="flex-row items-center px-4 py-3"
       ref={targetRef}
       style={selected && styles.projectHeaderSelected}
     >
@@ -273,7 +273,7 @@ const ProjectSectionCard = ({
       />
 
       <CollapsibleProjectBody expanded={expanded}>
-        <View className="border-t border-[#ECEBF1] px-4 py-1.5">
+        <View className="border-t border-[#ECEBF1] px-4 py-1">
         {activeComposer === section.id ? (
           <View
             className="mb-3 mt-3 rounded-[14px] border border-[#E0DDEE] bg-[#F8F7FB] p-3"

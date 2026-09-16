@@ -25,7 +25,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 
 import { inputAccentProps } from '../config/input';
-import { DESKTOP_LAYOUT_BREAKPOINT } from '../config/layout';
+import {
+  DESKTOP_LAYOUT_BREAKPOINT,
+  listContentMaxWidth,
+} from '../config/layout';
 import { useCurrentDateKey } from '../hooks/useCurrentDateKey';
 import { Translation, translations } from '../content';
 import {
@@ -174,7 +177,7 @@ const TodoRow = ({
   return (
     <View
       accessibilityState={{ selected }}
-      className={`${nested ? 'ml-6 min-h-[40px]' : 'min-h-[48px]'} my-0.5 flex-row items-center rounded-[10px] border-b px-2 ${
+      className={`${nested ? 'ml-6 min-h-[34px]' : 'min-h-[40px]'} flex-row items-center rounded-[10px] border-b px-2 ${
         selected
           ? 'border-[#D6D2EF] bg-[#EEECFF]'
           : todo.completed
@@ -582,7 +585,7 @@ const TodoScreen = ({
               ) : null;
             }}
             showsVerticalScrollIndicator={false}
-            style={styles.list}
+            style={[styles.list, { maxWidth: listContentMaxWidth(width) }]}
           />
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -596,7 +599,6 @@ const styles = StyleSheet.create({
   },
   list: {
     alignSelf: 'center',
-    maxWidth: 760,
     width: '100%',
   },
   listContent: {

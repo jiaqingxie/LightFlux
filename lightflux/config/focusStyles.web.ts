@@ -39,6 +39,14 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
       box-shadow: 0 2px 0 rgba(103, 89, 232, 0.16);
     }
 
+    /* The task body is an inline document-style editor: the whole surface is
+       editable, so it never shows a textarea-like focus border or ring. */
+    #task-rich-editor,
+    #task-rich-editor:focus-within {
+      border-color: transparent !important;
+      box-shadow: none !important;
+    }
+
     @media (max-width: ${DESKTOP_LAYOUT_BREAKPOINT - 1}px) {
       html,
       body,
@@ -65,13 +73,6 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
         #root > div {
           height: 100dvh;
         }
-      }
-    }
-
-    @media (min-width: ${DESKTOP_LAYOUT_BREAKPOINT}px) {
-      #task-rich-editor:focus-within {
-        border-color: rgba(103, 89, 232, 0.62) !important;
-        box-shadow: 0 0 0 3px rgba(103, 89, 232, 0.1);
       }
     }
 

@@ -42,11 +42,21 @@ const EDITOR_CSS = `
     box-shadow: none !important;
     outline: none !important;
   }
+  /* The body is an inline document surface that fills the details pane, so
+     clicking any empty area places the cursor in the editor. */
+  #task-rich-editor {
+    display: flex;
+    flex-direction: column;
+  }
+  #task-rich-editor .lightflux-tiptap {
+    flex: 1 1 auto;
+  }
   .lightflux-tiptap {
-    min-height: 120px;
-    padding: 16px;
+    min-height: 220px;
+    padding: 10px 2px 64px;
     color: #303145;
     font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    cursor: text;
   }
   .lightflux-tiptap > *:first-child { margin-top: 0; }
   .lightflux-tiptap p { margin: 0 0 0.85em; }
@@ -247,6 +257,35 @@ const TaskEditorScreen = ({
     return () => style.remove();
   }, []);
 
+  // The whole body surface is an editing surface: clicking its empty margins
+  // focuses the document instead of doing nothing like a read-only box.
+  useEffect(() => {
+    if (readOnly || compact || !editor) {
+      return undefined;
+    }
+    const node = document.getElementById('task-rich-editor');
+    if (!node) {
+      return undefined;
+    }
+    const onPointerDown = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        target !== node &&
+        !target.classList.contains('lightflux-tiptap')
+      ) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (!editor.isDestroyed && !editor.view.hasFocus()) {
+          editor.view.focus();
+        }
+      });
+    };
+    node.addEventListener('pointerdown', onPointerDown);
+    return () => node.removeEventListener('pointerdown', onPointerDown);
+  }, [compact, editor, readOnly]);
+
   useEffect(() => {
     if (todo) {
       setTitle(todo.title);
@@ -297,20 +336,32 @@ const TaskEditorScreen = ({
             ? labels.editor.imageUploadUnsupported
             : labels.editor.imageUploadFailed;
 
+  const focusBody = () => {
+    if (!readOnly && editor && !editor.isDestroyed) {
+      editor.view.focus();
+    }
+  };
+
   return (
     <View
-      className={`${
-        compact || embedded ? 'bg-white' : 'flex-1 bg-canvas'
+      className={`flex-1 ${
+        compact || embedded ? 'bg-white' : 'bg-canvas'
       }`}
     >
-      <SafeAreaView className={compact || embedded ? '' : 'flex-1'}>
+      <SafeAreaView className="flex-1">
         <ScrollView
           contentContainerStyle={[
             styles.content,
-            compact && styles.contentCompact,
+            compact
+              ? styles.contentCompact
+              : embedded
+                ? styles.contentEmbedded
+                : styles.contentStandalone,
+            !compact && { maxWidth: Math.min(980, width - 48) },
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          style={styles.scroll}
         >
           {compact ? <View style={styles.sheetHandle} /> : null}
           <View className={`${compact ? 'mb-2' : 'mb-3'} flex-row items-start`}>
@@ -375,15 +426,8 @@ const TaskEditorScreen = ({
           />
 
           <View
-            className={
-              compact
-                ? 'min-h-[80px]'
-                : `min-h-[160px] overflow-hidden rounded-[16px] border bg-white ${
-                    readOnly ? 'border-[#ECEBF0]' : 'border-[#E2E1E9]'
-                  }`
-            }
+            className={compact ? 'min-h-[80px]' : 'flex-1'}
             nativeID="task-rich-editor"
-            style={readOnly || compact ? undefined : styles.editorShadow}
           >
             {imageUploadStatus ? (
               <View
@@ -421,22 +465,29 @@ const TaskEditorScreen = ({
 };
 
 const styles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+  },
   content: {
-    alignSelf: 'center',
-    maxWidth: 900,
-    padding: 20,
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
     width: '100%',
+  },
+  contentStandalone: {
+    alignSelf: 'center',
+    paddingBottom: 48,
+  },
+  contentEmbedded: {
+    alignSelf: 'stretch',
+    paddingBottom: 32,
+    paddingHorizontal: 28,
+    paddingTop: 16,
   },
   contentCompact: {
     paddingBottom: 28,
     paddingHorizontal: 16,
     paddingTop: 8,
-  },
-  editorShadow: {
-    shadowColor: '#424057',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
   },
   sheetHandle: {
     alignSelf: 'center',
