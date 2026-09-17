@@ -292,6 +292,7 @@ const AppShell = () => {
     })),
   );
   const {
+    checkForUpdates,
     desktopEnvironment,
     desktopPreferences,
     initializeDesktop,
@@ -301,6 +302,7 @@ const AppShell = () => {
     updateStatus,
   } = useDesktopStore(
     useShallow((state) => ({
+      checkForUpdates: state.checkForUpdates,
       desktopEnvironment: state.environment,
       desktopPreferences: state.preferences,
       initializeDesktop: state.initialize,
@@ -533,6 +535,24 @@ const AppShell = () => {
   useEffect(() => {
     void initializeDesktop();
   }, [initializeDesktop]);
+
+  // Quietly check for updates once after desktop startup. The store treats this
+  // as a background check: it stays silent when up-to-date or offline and only
+  // surfaces an update according to the user's reminder preference.
+  useEffect(() => {
+    if (
+      desktopEnvironment.isDesktop &&
+      desktopEnvironment.updaterConfigured &&
+      updateStatus === 'idle'
+    ) {
+      void checkForUpdates(false);
+    }
+  }, [
+    checkForUpdates,
+    desktopEnvironment.isDesktop,
+    desktopEnvironment.updaterConfigured,
+    updateStatus,
+  ]);
 
   useEffect(() => {
     let disposed = false;
