@@ -1,4 +1,5 @@
 import { Project, Todo } from '../../types/todo';
+import { ProjectProgress } from './projectProgressStats';
 
 export interface ProjectSection {
   id: string;
@@ -7,6 +8,7 @@ export interface ProjectSection {
   kind: Project['kind'];
   sortOrder: number;
   todos: Todo[];
+  progress: ProjectProgress;
 }
 
 export interface InlineComposerState {

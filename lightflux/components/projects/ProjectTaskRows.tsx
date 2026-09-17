@@ -36,8 +36,9 @@ export const InlineTaskComposer = ({
   placeholder: string;
 }) => (
   <View
-    className={`${nested ? 'ml-6 min-h-[40px]' : 'min-h-[48px]'} my-0.5 flex-row items-center rounded-[10px] border border-[#DDD9F0] bg-[#F8F7FF] px-2`}
+    className={`${nested ? 'ml-6 min-h-[34px]' : 'min-h-[40px]'} my-0.5 flex-row items-center rounded-[10px] border border-[#DDD9F0] bg-[#F8F7FF] px-2`}
     nativeID="inline-task-composer"
+    testID="lf-composer"
   >
     {nested ? (
       <Text className="mr-1.5 text-[12px] text-[#9D9AAB]">↳</Text>
@@ -47,7 +48,7 @@ export const InlineTaskComposer = ({
       {...inputAccentProps}
       accessibilityLabel={placeholder}
       autoFocus
-      className="ml-3 h-9 flex-1 border-0 bg-transparent px-1 py-0 text-[13px] font-semibold text-[#303145]"
+      className="ml-3 h-8 flex-1 border-0 bg-transparent px-1 py-0 text-[13px] font-semibold text-[#303145]"
       maxLength={160}
       onChangeText={onChange}
       onKeyPress={(event) => {
@@ -110,6 +111,7 @@ export const ProjectTask = ({
       }`}
       nativeID={`project-task-${todo.id}`}
       ref={targetRef}
+      testID="lf-row-in"
       style={[
         !selected &&
           todo.priority !== 'none' && {

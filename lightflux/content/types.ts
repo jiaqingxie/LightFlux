@@ -287,8 +287,6 @@ export interface Translation {
     addProject: string;
     projectPlaceholder: string;
     taskPlaceholder: string;
-    addTaskTitle: string;
-    cancelTask: string;
     reorderTask: string;
     addProjectAbove: string;
     addProjectBelow: string;

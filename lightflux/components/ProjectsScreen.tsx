@@ -83,6 +83,10 @@ const ProjectsScreen = ({
               }`}
               disabled={!controller.projectDraft.trim()}
               onPress={controller.submitProject}
+              style={({ pressed }) => ({
+                opacity: pressed ? 0.8 : 1,
+                transform: [{ scale: pressed ? 0.94 : 1 }],
+              })}
             >
               <Text className="text-xs font-extrabold text-white">
                 ＋ {controller.labels.projects.addProject}

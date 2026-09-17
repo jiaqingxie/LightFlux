@@ -6,17 +6,18 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
-import { inputAccentProps } from '../../config/input';
 import { Translation } from '../../content';
 import { Todo } from '../../types/todo';
 import DraggableTaskRow from '../tasks/DraggableTaskRow';
 import { TaskDragState } from '../tasks/taskDrag';
 import { OpenTaskMenu } from '../tasks/useTaskContextMenu';
-import ActionButton from '../ui/ActionButton';
+import ProjectProgressBar, {
+  PROJECT_COMPLETE_COLOR,
+} from './ProjectProgressBar';
+import { progressPercent } from './projectProgressStats';
 import {
   ProjectMenuPosition,
   OpenProjectMenu,
@@ -105,6 +106,7 @@ const ProjectHeader = ({
   onAddTask,
   onOpenMenu,
   onToggle,
+  progress,
   section,
   selected,
 }: {
@@ -113,6 +115,7 @@ const ProjectHeader = ({
   onAddTask: () => void;
   onOpenMenu: OpenProjectMenu;
   onToggle: () => void;
+  progress: ProjectSection['progress'];
   section: ProjectSection;
   selected: boolean;
 }) => {
@@ -131,68 +134,84 @@ const ProjectHeader = ({
     }).start();
   }, [expansion, isExpanded]);
 
+  const complete = progress.total > 0 && progress.ratio >= 1;
+
   return (
     <View
       accessibilityState={{ selected }}
-      className="flex-row items-center px-4 py-3"
+      className="px-4 py-3"
       ref={targetRef}
       style={selected && styles.projectHeaderSelected}
     >
       {selected ? <View style={styles.projectSelectionMarker} /> : null}
-      <Pressable
-        accessibilityLabel={
-          isExpanded ? labels.projects.collapse : labels.projects.expand
-        }
-        accessibilityRole="button"
-        className="flex-1 flex-row items-center"
-        delayLongPress={350}
-        onLongPress={() => {
-          longPressHandled.current = true;
-          openFromLongPress();
-          setTimeout(() => {
-            longPressHandled.current = false;
-          }, 500);
-        }}
-        onPress={() => {
-          if (!longPressHandled.current) {
-            onToggle();
+      <View className="flex-row items-center">
+        <Pressable
+          accessibilityLabel={
+            isExpanded ? labels.projects.collapse : labels.projects.expand
           }
-        }}
-      >
-        <Animated.View
-          className="mr-2"
-          style={{
-            transform: [
-              {
-                rotate: expansion.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['0deg', '90deg'],
-                }),
-              },
-            ],
+          accessibilityRole="button"
+          className="flex-1 flex-row items-center"
+          delayLongPress={350}
+          onLongPress={() => {
+            longPressHandled.current = true;
+            openFromLongPress();
+            setTimeout(() => {
+              longPressHandled.current = false;
+            }, 500);
+          }}
+          onPress={() => {
+            if (!longPressHandled.current) {
+              onToggle();
+            }
           }}
         >
-          <Ionicons color="#777888" name="chevron-forward" size={17} />
-        </Animated.View>
-        <View
-          className="mr-3 h-3 w-3 rounded-[6px]"
-          style={{ backgroundColor: section.color }}
-        />
-        <Text className="text-[17px] font-extrabold text-[#292A3D]">
-          {section.name}
-        </Text>
-        <Text className="ml-2 text-xs font-semibold text-[#A0A1AC]">
-          {labels.projects.count(section.todos.length)}
-        </Text>
-      </Pressable>
-      <Pressable
-        accessibilityLabel={`${labels.addTask}: ${section.name}`}
-        accessibilityRole="button"
-        className="h-9 w-9 items-center justify-center rounded-[13px] bg-[#F0EEFF]"
-        onPress={onAddTask}
-      >
-        <Text className="text-xl font-medium text-primary">＋</Text>
-      </Pressable>
+          <Animated.View
+            className="mr-2"
+            style={{
+              transform: [
+                {
+                  rotate: expansion.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0deg', '90deg'],
+                  }),
+                },
+              ],
+            }}
+          >
+            <Ionicons color="#777888" name="chevron-forward" size={17} />
+          </Animated.View>
+          <View
+            className="mr-3 h-3 w-3 rounded-[6px]"
+            style={{ backgroundColor: section.color }}
+          />
+          <Text className="text-[17px] font-extrabold text-[#292A3D]">
+            {section.name}
+          </Text>
+          {progress.total > 0 ? (
+            <Text
+              className="ml-2 text-xs font-extrabold"
+              style={{ color: complete ? PROJECT_COMPLETE_COLOR : '#A0A1AC' }}
+            >
+              {progressPercent(progress.ratio)}%
+            </Text>
+          ) : null}
+        </Pressable>
+        <Pressable
+          accessibilityLabel={`${labels.addTask}: ${section.name}`}
+          accessibilityRole="button"
+          className="h-9 w-9 items-center justify-center rounded-[13px] bg-[#F0EEFF]"
+          onPress={onAddTask}
+          style={({ pressed }) => ({
+            opacity: pressed ? 0.65 : 1,
+            transform: [{ scale: pressed ? 0.88 : 1 }],
+          })}
+        >
+          <Text className="text-xl font-medium text-primary">＋</Text>
+        </Pressable>
+      </View>
+      {progress.total > 0 ? (
+        <ProjectProgressBar color={section.color} ratio={progress.ratio} />
+      ) : null}
     </View>
   );
 };
@@ -261,6 +280,7 @@ const ProjectSectionCard = ({
     <View
       className="mb-3 overflow-hidden rounded-[20px] border border-[#E8E7EE] bg-white"
       style={[styles.cardShadow, selected && styles.projectCardSelected]}
+      testID="lf-card-in"
     >
       <ProjectHeader
         isExpanded={expanded}
@@ -268,6 +288,7 @@ const ProjectSectionCard = ({
         onAddTask={onOpenTaskComposer}
         onOpenMenu={onOpenProjectMenu}
         onToggle={onToggle}
+        progress={section.progress}
         section={section}
         selected={selected}
       />
@@ -275,38 +296,15 @@ const ProjectSectionCard = ({
       <CollapsibleProjectBody expanded={expanded}>
         <View className="border-t border-[#ECEBF1] px-4 py-1">
         {activeComposer === section.id ? (
-          <View
-            className="mb-3 mt-3 rounded-[14px] border border-[#E0DDEE] bg-[#F8F7FB] p-3"
-            nativeID={`project-task-composer-${section.id}`}
-          >
-            <Text className="mb-2 text-[11px] font-bold text-[#777889]">
-              {labels.projects.addTaskTitle}
-            </Text>
-            <TextInput
-              {...inputAccentProps}
-              accessibilityLabel={labels.projects.taskPlaceholder}
-              autoFocus
-              className="h-11 rounded-[10px] border border-[#E3E1EA] bg-white px-3 text-[13px] text-[#303145]"
-              onChangeText={onTaskDraftChange}
-              onSubmitEditing={onSubmitTask}
+          <View className="my-1.5">
+            <InlineTaskComposer
+              draft={taskDraft}
+              nested={false}
+              onCancel={onCancelTaskComposer}
+              onChange={onTaskDraftChange}
+              onSubmit={onSubmitTask}
               placeholder={labels.projects.taskPlaceholder}
-              placeholderTextColor="#A0A1AD"
-              returnKeyType="done"
-              value={taskDraft}
             />
-            <View className="mt-2 flex-row justify-end">
-              <ActionButton
-                label={labels.projects.cancelTask}
-                onPress={onCancelTaskComposer}
-                variant="ghost"
-              />
-              <View className="w-1" />
-              <ActionButton
-                disabled={!taskDraft.trim()}
-                label={labels.addTask}
-                onPress={onSubmitTask}
-              />
-            </View>
           </View>
         ) : null}
 

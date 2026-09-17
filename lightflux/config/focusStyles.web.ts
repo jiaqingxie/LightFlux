@@ -80,7 +80,7 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
     #calendar-task-composer:focus-within,
     #project-name-composer:focus-within,
     #context-subtask-composer:focus-within,
-    [id^="project-task-composer-"]:focus-within {
+    [data-testid='lf-composer']:focus-within {
       border-color: rgba(103, 89, 232, 0.56) !important;
       box-shadow: 0 0 0 3px rgba(103, 89, 232, 0.09);
     }
@@ -109,6 +109,93 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
         box-shadow 140ms ease,
         outline-color 140ms ease,
         background-color 140ms ease;
+    }
+
+    /* Project completion bars: deterministic transform driven by React, with
+       a CSS spring on web/Tauri (RN Animated is not driven in Hermes web). */
+    [data-testid='lf-progress-fill'] {
+      transform-origin: left center;
+      transition: transform 480ms cubic-bezier(0.24, 1, 0.32, 1);
+      will-change: transform;
+    }
+    [data-testid='lf-progress-shimmer'] {
+      /* "both" keeps the element invisible during the 160ms delay (0% keyframe),
+         otherwise a fully-opaque band flashes before the sweep starts. */
+      animation: lf-progress-shimmer 900ms cubic-bezier(0.4, 0, 0.2, 1) 160ms
+        1 normal both;
+      opacity: 0;
+    }
+    @keyframes lf-progress-shimmer {
+      0% {
+        opacity: 0;
+        transform: translateX(-120%);
+      }
+      25%,
+      75% {
+        opacity: 0.85;
+      }
+      100% {
+        opacity: 0;
+        transform: translateX(420%);
+      }
+    }
+
+    /* Entrance motion for adding tasks and projects. One-shot keyframes on
+       mount only (new DOM nodes); native drives the equivalent via
+       LayoutAnimation in the projects controller. */
+    [data-testid='lf-composer'] {
+      animation: lf-composer-in 190ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      transform-origin: top center;
+    }
+    [data-testid='lf-row-in'] {
+      animation: lf-row-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    [data-testid='lf-card-in'] {
+      animation: lf-card-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @keyframes lf-composer-in {
+      0% {
+        opacity: 0;
+        transform: translateY(-5px) scaleY(0.85);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scaleY(1);
+      }
+    }
+    @keyframes lf-row-in {
+      0% {
+        opacity: 0;
+        transform: translateY(-7px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    @keyframes lf-card-in {
+      0% {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      [data-testid='lf-progress-fill'] {
+        transition: none;
+      }
+      [data-testid='lf-progress-shimmer'] {
+        animation: none;
+      }
+      [data-testid='lf-composer'],
+      [data-testid='lf-row-in'],
+      [data-testid='lf-card-in'] {
+        animation: none;
+      }
     }
   `;
   document.head.appendChild(style);

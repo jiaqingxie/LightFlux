@@ -5,8 +5,6 @@ export const projects: Translation['projects'] = {
   addProject: '新建项目',
   projectPlaceholder: '项目名称',
   taskPlaceholder: '添加任务到此项目…',
-  addTaskTitle: '添加主任务',
-  cancelTask: '取消',
   reorderTask: '拖拽排序任务',
   addProjectAbove: '在上方添加项目',
   addProjectBelow: '在下方添加项目',

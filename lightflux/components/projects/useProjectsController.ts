@@ -4,7 +4,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { Keyboard, Platform } from 'react-native';
+import { Keyboard, LayoutAnimation, Platform } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
 import { translations } from '../../content';
@@ -22,6 +22,7 @@ import {
   ProjectMenuPosition,
   OpenProjectMenu,
 } from './useProjectContextMenu';
+import { buildProjectProgress } from './projectProgressStats';
 import {
   ProjectSection,
   InlineComposerState,
@@ -103,11 +104,17 @@ export const useProjectsController = (
     return mapped;
   }, [activeTodos]);
   const sections = useMemo<ProjectSection[]>(
-    () =>
-      projects
+    () => {
+      const progressByProject = buildProjectProgress(todos);
+      return projects
         .map((project) => ({
           ...project,
           todos: todosByProject.get(project.id) ?? [],
+          progress: progressByProject.get(project.id) ?? {
+            completed: 0,
+            total: 0,
+            ratio: 0,
+          },
         }))
         .sort(
         (left, right) =>
@@ -116,8 +123,9 @@ export const useProjectsController = (
             right.name,
             language === 'zh' ? 'zh-CN' : 'en-US',
           ),
-      ),
-    [projects, language, todosByProject],
+      );
+    },
+    [projects, language, todos, todosByProject],
   );
   const childCountByParent = useMemo(
     () => buildChildCountByParent(activeTodos),
@@ -130,6 +138,13 @@ export const useProjectsController = (
   const activeMenuSection = projectMenu
     ? sections.find((section) => section.id === projectMenu.sectionId)
     : undefined;
+  // Web/Tauri gets mount keyframes from focusStyles.web.ts; native asks the
+  // layout engine to animate the insert/removal of composers, rows and cards.
+  const animateNextLayout = () => {
+    if (Platform.OS !== 'web') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+  };
   const openProjectMenu = useCallback<OpenProjectMenu>(
     (sectionId, position) => {
       setProjectMenu({ sectionId, position });
@@ -140,6 +155,7 @@ export const useProjectsController = (
     (todo: Todo) => {
       const sectionId = todo.projectId;
       const section = sections.find((item) => item.id === sectionId);
+      animateNextLayout();
       setExpanded((current) => ({ ...current, [sectionId]: true }));
       setActiveComposer(null);
       setInlineDraft('');
@@ -247,6 +263,7 @@ export const useProjectsController = (
   ]);
 
   const openComposer = (id: string) => {
+    animateNextLayout();
     setExpanded((current) => ({ ...current, [id]: true }));
     setInlineComposer(null);
     setInlineDraft('');
@@ -254,6 +271,7 @@ export const useProjectsController = (
     setTaskDraft('');
   };
   const cancelTaskComposer = () => {
+    animateNextLayout();
     setActiveComposer(null);
     setTaskDraft('');
   };
@@ -270,6 +288,7 @@ export const useProjectsController = (
     Keyboard.dismiss();
   };
   const cancelInlineComposer = () => {
+    animateNextLayout();
     setInlineDraft('');
     setInlineComposer(null);
   };
@@ -294,6 +313,7 @@ export const useProjectsController = (
       return;
     }
     const id = addProject(name);
+    animateNextLayout();
     setExpanded((current) => ({ ...current, [id]: true }));
     setProjectDraft('');
     setActiveComposer(id);
@@ -307,6 +327,7 @@ export const useProjectsController = (
       anchorProjectId: activeMenuSection.id,
       position,
     });
+    animateNextLayout();
     setExpanded((current) => ({ ...current, [id]: true }));
   };
   const deleteActiveProject = () => {
